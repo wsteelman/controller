@@ -28,8 +28,8 @@
 
 // Local Includes
 #include "connect_scan.h"
-
-
+#include "uart.h"
+#include "ring_buffer.h"
 
 // ----- Defines -----
 
@@ -37,74 +37,6 @@
 #define UART_Master 1
 #define UART_Slave  0
 #define UART_Buffer_Size UARTConnectBufSize_define
-
-
-
-// ----- Macros -----
-
-// Macro for popping from Tx ring buffer
-#define uart_fillTxFifo( uartNum ) \
-{ \
-	uint8_t fifoSize = ( ( UART##uartNum##_PFIFO & UART_PFIFO_TXFIFOSIZE ) >> 2 ); \
-	if ( fifoSize == 0 ) \
-		fifoSize = 1; \
-	if ( Connect_debug ) \
-	{ \
-		print( "TxFIFO " #uartNum " - " ); \
-		printHex( fifoSize ); \
-		print("/"); \
-		printHex( UART##uartNum##_TCFIFO ); \
-		print("/"); \
-		printHex( uart_tx_buf[ uartNum ].items ); \
-		print( NL ); \
-	} \
-	/* XXX Doesn't work well */ \
-	/* while ( UART##uartNum##_TCFIFO < fifoSize ) */ \
-	/* More reliable, albeit slower */ \
-	fifoSize -= UART##uartNum##_TCFIFO; \
-	while ( fifoSize-- != 0 ) \
-	{ \
-		if ( uart_tx_buf[ uartNum ].items == 0 ) \
-			break; \
-		UART##uartNum##_D = uart_tx_buf[ uartNum ].buffer[ uart_tx_buf[ uartNum ].head++ ]; \
-		uart_tx_buf[ uartNum ].items--; \
-		if ( uart_tx_buf[ uartNum ].head >= UART_Buffer_Size ) \
-			uart_tx_buf[ uartNum ].head = 0; \
-	} \
-}
-
-// Macros for locking/unlock Tx buffers
-#define uart_lockTx( uartNum ) \
-{ \
-	/* First, secure place in line for the resource */ \
-	while ( uart_tx_status[ uartNum ].lock ); \
-	uart_tx_status[ uartNum ].lock = 1; \
-	/* Next, wait unit the UART is ready */ \
-	while ( uart_tx_status[ uartNum ].status != UARTStatus_Ready ); \
-	uart_tx_status[ uartNum ].status = UARTStatus_Wait; \
-}
-
-#define uart_lockBothTx( uartNum1, uartNum2 ) \
-{ \
-	/* First, secure place in line for the resource */ \
-	while ( uart_tx_status[ uartNum1 ].lock || uart_tx_status[ uartNum2 ].lock ); \
-	uart_tx_status[ uartNum1 ].lock = 1; \
-	uart_tx_status[ uartNum2 ].lock = 1; \
-	/* Next, wait unit the UARTs are ready */ \
-	while ( uart_tx_status[ uartNum1 ].status != UARTStatus_Ready || uart_tx_status[ uartNum2 ].status != UARTStatus_Ready ); \
-	uart_tx_status[ uartNum1 ].status = UARTStatus_Wait; \
-	uart_tx_status[ uartNum2 ].status = UARTStatus_Wait; \
-}
-
-#define uart_unlockTx( uartNum ) \
-{ \
-	/* Ready the UART */ \
-	uart_tx_status[ uartNum ].status = UARTStatus_Ready; \
-	/* Unlock the resource */ \
-	uart_tx_status[ uartNum ].lock = 0; \
-}
-
-
 
 // ----- Function Declarations -----
 
@@ -118,13 +50,12 @@ void cliFunc_connectRst ( char *args );
 void cliFunc_connectSts ( char *args );
 
 
-
 // ----- Structs -----
 
 typedef struct UARTRingBuf {
 	uint8_t head;
 	uint8_t tail;
-	uint8_t items;
+   uint8_t capacity;
 	uint8_t buffer[UART_Buffer_Size];
 } UARTRingBuf;
 
@@ -193,8 +124,69 @@ volatile UARTStatusRx uart_rx_status[UART_Num_Interfaces];
 UARTRingBuf  uart_tx_buf   [UART_Num_Interfaces];
 UARTStatusTx uart_tx_status[UART_Num_Interfaces];
 
+// -- UART Variables --
+uart_handle_t slave_handle = NULL;
+uart_handle_t master_handle = NULL;
 
 // -- Ring Buffer Convenience Functions --
+void uart_fillTxFifo( uint8_t index, uart_handle_t handle )
+{
+   UARTRingBuf *rbuf = &uart_tx_buf[index];
+   uint8_t tx_pending = uart_tx_fifo_pending(handle);
+   if ( ring_buffer_empty(rbuf) || tx_pending > 0 )
+      return;
+
+	uint8_t fifoSize = uart_tx_fifo_size(handle);
+	if ( fifoSize == 0 )
+		fifoSize = 1;
+	if ( Connect_debug )
+	{
+		print( "TxFIFO " );
+      printHex( index );
+      print(" - " );
+		printHex( fifoSize );
+		print("/");
+		printHex( uart_tx_fifo_pending(handle) );
+		print("/");
+		printHex( ring_buffer_size(rbuf) );
+		print( NL );
+	}
+
+   uint8_t data = 0;
+
+	/* XXX Doesn't work well */
+	/* while ( UART##uartNum##_TCFIFO < fifoSize ) */
+	/* More reliable, albeit slower */
+	fifoSize -= tx_pending;
+	while ( fifoSize-- != 0 )
+	{
+      error_code_t err = ring_buffer_dequeue(rbuf, &data);
+		if ( err != SUCCESS )
+			break;
+      uart_send(handle, data);
+	}
+}
+
+void uart_lockTx( uint8_t uartNum )
+{
+   // TODO This code does not actually guarantee mutual exclusion, need to get better mutex
+   // ARM synchronization primitives: http://infocenter.arm.com/help/topic/com.arm.doc.dht0008a/DHT0008A_arm_synchronization_primitives.pdf
+
+	/* First, secure place in line for the resource */
+	while ( uart_tx_status[ uartNum ].lock );
+	uart_tx_status[ uartNum ].lock = 1;
+	/* Next, wait unit the UART is ready */
+	while ( uart_tx_status[ uartNum ].status != UARTStatus_Ready );
+	uart_tx_status[ uartNum ].status = UARTStatus_Wait;
+}
+
+void uart_unlockTx( uint8_t uartNum )
+{
+	/* Ready the UART */
+	uart_tx_status[ uartNum ].status = UARTStatus_Ready;
+	/* Unlock the resource */
+	uart_tx_status[ uartNum ].lock = 0;
+}
 
 void Connect_addBytes( uint8_t *buffer, uint8_t count, uint8_t uart )
 {
@@ -212,36 +204,22 @@ void Connect_addBytes( uint8_t *buffer, uint8_t count, uint8_t uart )
 		return;
 	}
 
-	// Delay UART copy until there's some space left
-	while ( uart_tx_buf[ uart ].items + count > UART_Buffer_Size )
-	{
-		warn_msg("Too much data to send on UART");
-		printInt8( uart );
-		print( ", waiting..." NL );
-		delay( 1 );
-		// FIXME Buffer will not drain here....
-	}
-
-	// Append data to ring buffer
-	for ( uint8_t c = 0; c < count; c++ )
-	{
-		if ( Connect_debug )
+   UARTRingBuf *buf = &uart_tx_buf[ uart ];
+   for (uint8_t i = 0; i < count; i++)
+   {
+      while (ring_buffer_enqueue(buf, *buffer) != SUCCESS)
+      {
+         delay( 1 );
+      }
+      if ( Connect_debug )
 		{
-			printHex( buffer[ c ] );
+			printHex( *buffer );
 			print(" +");
 			printInt8( uart );
 			print( NL );
 		}
-
-		uart_tx_buf[ uart ].buffer[ uart_tx_buf[ uart ].tail++ ] = buffer[ c ];
-		uart_tx_buf[ uart ].items++;
-		if ( uart_tx_buf[ uart ].tail >= UART_Buffer_Size )
-			uart_tx_buf[ uart ].tail = 0;
-		if ( uart_tx_buf[ uart ].head == uart_tx_buf[ uart ].tail )
-			uart_tx_buf[ uart ].head++;
-		if ( uart_tx_buf[ uart ].head >= UART_Buffer_Size )
-			uart_tx_buf[ uart ].head = 0;
-	}
+      buffer++;
+   }
 }
 
 
@@ -251,7 +229,8 @@ void Connect_addBytes( uint8_t *buffer, uint8_t count, uint8_t uart )
 void Connect_send_CableCheck( uint8_t patternLen )
 {
 	// Wait until the Tx buffers are ready, then lock them
-	uart_lockBothTx( UART_Master, UART_Slave );
+   uart_lockTx( UART_Master );
+   uart_lockTx( UART_Slave );
 
 	// Prepare header
 	uint8_t header[] = { 0x16, 0x01, CableCheck, patternLen };
@@ -410,7 +389,8 @@ void Connect_send_RemoteCapability( uint8_t id, uint8_t capabilityIndex, uint8_t
 void Connect_send_Idle( uint8_t num )
 {
 	// Wait until the Tx buffers are ready, then lock them
-	uart_lockBothTx( UART_Slave, UART_Master );
+   uart_lockTx( UART_Master );
+   uart_lockTx( UART_Slave );
 
 	// Send n number of idles to reset link status (if in a bad state)
 	uint8_t value = 0x16;
@@ -864,7 +844,10 @@ void Connect_reset()
 	memset( (void*)uart_rx_status, 0, sizeof( UARTStatusRx ) * UART_Num_Interfaces );
 
 	// Reset Tx
-	memset( (void*)uart_tx_buf,    0, sizeof( UARTRingBuf )  * UART_Num_Interfaces );
+   for (uint8_t i = 0; i < UART_Num_Interfaces; ++i)
+   {
+      ring_buffer_reset(&uart_tx_buf[i], UART_Buffer_Size);
+   }
 	memset( (void*)uart_tx_status, 0, sizeof( UARTStatusTx ) * UART_Num_Interfaces );
 
 	// Set Rx/Tx buffers as ready
@@ -875,6 +858,15 @@ void Connect_reset()
 	}
 }
 
+void Connect_set_master( uint8_t master )
+{
+	// Check if master
+	Connect_master = master;
+	if ( Connect_master )
+		Connect_id = 0; // 0x00 is always the master Id
+   else
+      Connect_id = 0xFF;
+}
 
 // Setup connection to other side
 // - Only supports a single slave and master
@@ -889,118 +881,40 @@ void Connect_setup( uint8_t master )
 	CLI_registerDictionary( uartConnectCLIDict, uartConnectCLIDictName );
 
 	// Check if master
-	Connect_master = master;
-	if ( Connect_master )
-		Connect_id = 0; // 0x00 is always the master Id
+   Connect_set_master(master);
 
-	// UART0 setup
-	// UART1 setup
-	// Setup the the UART interface for keyboard data input
-	SIM_SCGC4 |= SIM_SCGC4_UART0; // Disable clock gating
-	SIM_SCGC4 |= SIM_SCGC4_UART1; // Disable clock gating
+   slave_handle = uart_config(UART_Slave, Connect_baud);
+   if (slave_handle == NULL)
+   {
+		erro_print("Unable to setup slave uart connection...");
+      return;
+   }
 
-	// Pin Setup for UART0 / UART1
-	PORTA_PCR1 = PORT_PCR_PE | PORT_PCR_PS | PORT_PCR_PFE | PORT_PCR_MUX(2); // RX Pin
-	PORTA_PCR2 = PORT_PCR_DSE | PORT_PCR_SRE | PORT_PCR_MUX(2); // TX Pin
-	PORTE_PCR0 = PORT_PCR_PE | PORT_PCR_PS | PORT_PCR_PFE | PORT_PCR_MUX(3); // RX Pin
-	PORTE_PCR1 = PORT_PCR_DSE | PORT_PCR_SRE | PORT_PCR_MUX(3); // TX Pin
+   master_handle = uart_config(UART_Master, Connect_baud);
+   if (master_handle == NULL)
+   {
+		erro_print("Unable to setup master uart connection...");
+      return;
+   }
 
-	// Baud Rate setting
-	UART0_BDH = (uint8_t)(Connect_baud >> 8);
-	UART0_BDL = (uint8_t)Connect_baud;
-	UART0_C4  = Connect_baudFine;
-	UART1_BDH = (uint8_t)(Connect_baud >> 8);
-	UART1_BDL = (uint8_t)Connect_baud;
-	UART1_C4  = Connect_baudFine;
+   error_code_t err;
+   err = uart_rx_dma_setup(0, slave_handle, (uint32_t*)uart_rx_buf[UART_Slave].buffer, UART_Buffer_Size);
+   if (err != SUCCESS)
+   {
+      erro_print("Failed to setup DMA channel for for slave uart...");
+      printHex32(err);
+      return;
+   }
+   err = uart_rx_dma_setup(1, master_handle, (uint32_t*)uart_rx_buf[UART_Master].buffer, UART_Buffer_Size);
+   if (err != SUCCESS)
+   {
+      erro_print("Failed to setup DMA channel for for master uart...");
+      printHex32(err);
+      return;
+   }
 
-	// 8 bit, Even Parity, Idle Character bit after stop
-	// NOTE: For 8 bit with Parity you must enable 9 bit transmission (pg. 1065)
-	//       You only need to use UART0_D for 8 bit reading/writing though
-	// UART_C1_M UART_C1_PE UART_C1_PT UART_C1_ILT
-	UART0_C1 = UART_C1_M | UART_C1_PE | UART_C1_ILT;
-	UART1_C1 = UART_C1_M | UART_C1_PE | UART_C1_ILT;
-
-	// Only using Tx Fifos
-	UART0_PFIFO = UART_PFIFO_TXFE;
-	UART1_PFIFO = UART_PFIFO_TXFE;
-
-	// Setup DMA clocks
-	SIM_SCGC6 |= SIM_SCGC6_DMAMUX;
-	SIM_SCGC7 |= SIM_SCGC7_DMA;
-
-	// Start with channels disabled first
-	DMAMUX0_CHCFG0 = 0;
-	DMAMUX0_CHCFG1 = 0;
-
-	// Configure DMA channels
-	//DMA_DSR_BCR0 |= DMA_DSR_BCR_DONE_MASK; // TODO What's this?
-	DMA_TCD0_CSR = 0;
-	DMA_TCD1_CSR = 0;
-
-	// Default control register
-	DMA_CR = 0;
-
-	// DMA Priority
-	DMA_DCHPRI0 = 0; // Ch 0, priority 0
-	DMA_DCHPRI1 = 1; // ch 1, priority 1
-
-	// Clear error interrupts
-	DMA_EEI = 0;
-
-	// Setup TCD
-	DMA_TCD0_SADDR = (uint32_t*)&UART0_D;
-	DMA_TCD1_SADDR = (uint32_t*)&UART1_D;
-	DMA_TCD0_SOFF = 0;
-	DMA_TCD1_SOFF = 0;
-
-	// No modulo, 8-bit transfer size
-	DMA_TCD0_ATTR = DMA_TCD_ATTR_SMOD(0) | DMA_TCD_ATTR_SSIZE(0) | DMA_TCD_ATTR_DMOD(0) | DMA_TCD_ATTR_DSIZE(0);
-	DMA_TCD1_ATTR = DMA_TCD_ATTR_SMOD(0) | DMA_TCD_ATTR_SSIZE(0) | DMA_TCD_ATTR_DMOD(0) | DMA_TCD_ATTR_DSIZE(0);
-
-	// One byte transferred at a time
-	DMA_TCD0_NBYTES_MLNO = 1;
-	DMA_TCD1_NBYTES_MLNO = 1;
-
-	// Source address does not change
-	DMA_TCD0_SLAST = 0;
-	DMA_TCD1_SLAST = 0;
-
-	// Destination buffer
-	DMA_TCD0_DADDR = (uint32_t*)uart_rx_buf[0].buffer;
-	DMA_TCD1_DADDR = (uint32_t*)uart_rx_buf[1].buffer;
-
-	// Incoming byte, increment by 1 in the rx buffer
-	DMA_TCD0_DOFF = 1;
-	DMA_TCD1_DOFF = 1;
-
-	// Single major loop, must be the same value
-	DMA_TCD0_CITER_ELINKNO = UART_Buffer_Size;
-	DMA_TCD1_CITER_ELINKNO = UART_Buffer_Size;
-	DMA_TCD0_BITER_ELINKNO = UART_Buffer_Size;
-	DMA_TCD1_BITER_ELINKNO = UART_Buffer_Size;
-
-	// Reset buffer when full
-	DMA_TCD0_DLASTSGA = -( UART_Buffer_Size );
-	DMA_TCD1_DLASTSGA = -( UART_Buffer_Size );
-
-	// Enable DMA channels
-	DMA_ERQ |= DMA_ERQ_ERQ0 | DMA_ERQ_ERQ1;
-
-	// Setup DMA channel routing
-	DMAMUX0_CHCFG0 = DMAMUX_ENABLE | DMAMUX_SOURCE_UART0_RX;
-	DMAMUX0_CHCFG1 = DMAMUX_ENABLE | DMAMUX_SOURCE_UART1_RX;
-
-	// Enable DMA requests (requires Rx interrupts)
-	UART0_C5 = UART_C5_RDMAS;
-	UART1_C5 = UART_C5_RDMAS;
-
-	// TX Enabled, RX Enabled, RX Interrupt Enabled
-	UART0_C2 = UART_C2_TE | UART_C2_RE | UART_C2_RIE;
-	UART1_C2 = UART_C2_TE | UART_C2_RE | UART_C2_RIE;
-
-	// Add interrupts to the vector table
-	NVIC_ENABLE_IRQ( IRQ_UART0_STATUS );
-	NVIC_ENABLE_IRQ( IRQ_UART1_STATUS );
+   uart_start(slave_handle);
+   uart_start(master_handle);
 
 	// UARTs are now ready to go
 	uarts_configured = 1;
@@ -1158,7 +1072,8 @@ void Connect_scan()
 	// Then reconfigure as a master
 	if ( !Connect_master && Output_Available && !Connect_override )
 	{
-		Connect_setup( Output_Available );
+      Connect_set_master( Output_Available );
+      Connect_reset();
 	}
 
 	// Limit how often we do cable checks
@@ -1188,10 +1103,10 @@ void Connect_scan()
 	{
 		// Check if Tx Buffers are empty and the Tx Ring buffers have data to send
 		// This happens if there was previously nothing to send
-		if ( uart_tx_buf[ 0 ].items > 0 && UART0_TCFIFO == 0 )
-			uart_fillTxFifo( 0 );
-		if ( uart_tx_buf[ 1 ].items > 0 && UART1_TCFIFO == 0 )
-			uart_fillTxFifo( 1 );
+      //uart_fillTxFifo(UART_Slave, slave_handle);
+      //uart_fillTxFifo(UART_Master, master_handle);
+      uart_fillTxFifo(UART_Slave, slave_handle);
+      uart_fillTxFifo(UART_Master, master_handle);
 
 		// Process Rx Buffers
 		Connect_rx_process( 0 );

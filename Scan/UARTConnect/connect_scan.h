@@ -45,15 +45,13 @@ typedef enum Command {
 } Command;
 
 // UART Rx/Tx Status
-typedef enum UARTStatus {
-	UARTStatus_Wait    = 0, // Waiting  Rx: for SYN  Tx: for current command copy to finish
-	UARTStatus_SYN     = 1, // Rx: SYN Received, waiting for SOH
-	UARTStatus_SOH     = 2, // Rx: SOH Received, waiting for Command
-	UARTStatus_Command = 3, // Rx: Command Received, waiting for data
-	UARTStatus_Ready   = 4, // Tx: Ready to send commands
-} UARTStatus;
-
-
+//typedef enum UARTStatus {
+//	UARTStatus_Wait    = 0, // Waiting  Rx: for SYN  Tx: for current command copy to finish
+//	UARTStatus_SYN     = 1, // Rx: SYN Received, waiting for SOH
+//	UARTStatus_SOH     = 2, // Rx: SOH Received, waiting for Command
+//	UARTStatus_Command = 3, // Rx: Command Received, waiting for data
+//	UARTStatus_Ready   = 4, // Tx: Ready to send commands
+//} UARTStatus;
 
 // ----- Structs -----
 

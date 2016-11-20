@@ -30,6 +30,7 @@
 #include "connect_scan.h"
 #include "uart.h"
 #include "ring_buffer.h"
+#include "uart_message_pipe.h"
 
 // ----- Defines -----
 
@@ -37,6 +38,7 @@
 #define UART_Master 1
 #define UART_Slave  0
 #define UART_Buffer_Size UARTConnectBufSize_define
+
 
 // ----- Function Declarations -----
 
@@ -51,13 +53,6 @@ void cliFunc_connectSts ( char *args );
 
 
 // ----- Structs -----
-
-typedef struct UARTRingBuf {
-	uint8_t head;
-	uint8_t tail;
-   uint8_t capacity;
-	uint8_t buffer[UART_Buffer_Size];
-} UARTRingBuf;
 
 typedef struct UARTDMABuf {
 	uint8_t  buffer[UART_Buffer_Size];
@@ -74,6 +69,23 @@ typedef struct UARTStatusTx {
 	UARTStatus status;
 	uint8_t    lock;
 } UARTStatusTx;
+
+// ----- Messages -----
+
+typedef struct simple_msg_t
+{
+   msg_header     header;
+} simple_msg_t;
+
+typedef struct cable_check_msg_t
+{
+   msg_header     header;
+   uint8_t        len;
+   uint8_t        pattern[UARTConnectCableCheckLength_define];
+} cable_check_msg_t;
+
+cable_check_msg_t cable_check_msg   = { {CmdCommand_SYN, 0x01, CmdCableCheck}, UARTConnectCableCheckLength_define, {0xD2}};
+simple_msg_t      id_request_msg    = { {CmdCommand_SYN, 0x01, CmdIdRequest} };
 
 
 
@@ -121,51 +133,13 @@ volatile UARTStatusRx uart_rx_status[UART_Num_Interfaces];
 
 // -- Tx Variables --
 
-UARTRingBuf  uart_tx_buf   [UART_Num_Interfaces];
 UARTStatusTx uart_tx_status[UART_Num_Interfaces];
 
 // -- UART Variables --
 uart_handle_t slave_handle = NULL;
 uart_handle_t master_handle = NULL;
-
-// -- Ring Buffer Convenience Functions --
-void uart_fillTxFifo( uint8_t index, uart_handle_t handle )
-{
-   UARTRingBuf *rbuf = &uart_tx_buf[index];
-   uint8_t tx_pending = uart_tx_fifo_pending(handle);
-   if ( ring_buffer_empty(rbuf) || tx_pending > 0 )
-      return;
-
-	uint8_t fifoSize = uart_tx_fifo_size(handle);
-	if ( fifoSize == 0 )
-		fifoSize = 1;
-	if ( Connect_debug )
-	{
-		print( "TxFIFO " );
-      printHex( index );
-      print(" - " );
-		printHex( fifoSize );
-		print("/");
-		printHex( uart_tx_fifo_pending(handle) );
-		print("/");
-		printHex( ring_buffer_size(rbuf) );
-		print( NL );
-	}
-
-   uint8_t data = 0;
-
-	/* XXX Doesn't work well */
-	/* while ( UART##uartNum##_TCFIFO < fifoSize ) */
-	/* More reliable, albeit slower */
-	fifoSize -= tx_pending;
-	while ( fifoSize-- != 0 )
-	{
-      error_code_t err = ring_buffer_dequeue(rbuf, &data);
-		if ( err != SUCCESS )
-			break;
-      uart_send(handle, data);
-	}
-}
+uart_message_pipe_t slave_pipe;
+uart_message_pipe_t master_pipe;
 
 void uart_lockTx( uint8_t uartNum )
 {
@@ -190,81 +164,25 @@ void uart_unlockTx( uint8_t uartNum )
 
 void Connect_addBytes( uint8_t *buffer, uint8_t count, uint8_t uart )
 {
-	// Too big to fit into buffer
-	if ( count > UART_Buffer_Size )
-	{
-		erro_msg("Too big of a command to fit into the buffer...");
-		return;
-	}
-
-	// Invalid UART
-	if ( uart >= UART_Num_Interfaces )
-	{
-		erro_print("Invalid UART to send from...");
-		return;
-	}
-
-   UARTRingBuf *buf = &uart_tx_buf[ uart ];
-   for (uint8_t i = 0; i < count; i++)
-   {
-      while (ring_buffer_enqueue(buf, *buffer) != SUCCESS)
-      {
-         delay( 1 );
-      }
-      if ( Connect_debug )
-		{
-			printHex( *buffer );
-			print(" +");
-			printInt8( uart );
-			print( NL );
-		}
-      buffer++;
-   }
+   if (uart == UART_Slave)
+      upipe_send_bytes(&slave_pipe, buffer, count);
+   else if (uart == UART_Master)
+      upipe_send_bytes(&master_pipe, buffer, count);
 }
 
 
 // -- Connect send functions --
 
 // patternLen defines how many bytes should the incrementing pattern have
-void Connect_send_CableCheck( uint8_t patternLen )
+void Connect_send_CableCheck()
 {
-	// Wait until the Tx buffers are ready, then lock them
-   uart_lockTx( UART_Master );
-   uart_lockTx( UART_Slave );
-
-	// Prepare header
-	uint8_t header[] = { 0x16, 0x01, CableCheck, patternLen };
-
-	// Send header
-	Connect_addBytes( header, sizeof( header ), UART_Master );
-	Connect_addBytes( header, sizeof( header ), UART_Slave );
-
-	// Send 0xD2 (11010010) for each argument
-	uint8_t value = 0xD2;
-	for ( uint8_t c = 0; c < patternLen; c++ )
-	{
-		Connect_addBytes( &value, 1, UART_Master );
-		Connect_addBytes( &value, 1, UART_Slave );
-	}
-
-	// Release Tx buffers
-	uart_unlockTx( UART_Master );
-	uart_unlockTx( UART_Slave );
+   upipe_send_msg(&master_pipe, &cable_check_msg.header, sizeof(cable_check_msg));
+   upipe_send_msg(&slave_pipe, &cable_check_msg.header, sizeof(cable_check_msg));
 }
 
 void Connect_send_IdRequest()
 {
-	// Lock master bound Tx
-	uart_lockTx( UART_Master );
-
-	// Prepare header
-	uint8_t header[] = { 0x16, 0x01, IdRequest };
-
-	// Send header
-	Connect_addBytes( header, sizeof( header ), UART_Master );
-
-	// Unlock Tx
-	uart_unlockTx( UART_Master );
+   upipe_send_msg(&master_pipe, &id_request_msg.header, sizeof(id_request_msg));
 }
 
 // id is the value the next slave should enumerate as
@@ -840,20 +758,15 @@ void *Connect_receiveFunctions[] = {
 // Resets the state of the UART buffers and state variables
 void Connect_reset()
 {
+   upipe_reset(&slave_pipe, UART_Buffer_Size);
+   upipe_reset(&master_pipe, UART_Buffer_Size);
+
 	// Reset Rx
 	memset( (void*)uart_rx_status, 0, sizeof( UARTStatusRx ) * UART_Num_Interfaces );
-
-	// Reset Tx
-   for (uint8_t i = 0; i < UART_Num_Interfaces; ++i)
-   {
-      ring_buffer_reset(&uart_tx_buf[i], UART_Buffer_Size);
-   }
-	memset( (void*)uart_tx_status, 0, sizeof( UARTStatusTx ) * UART_Num_Interfaces );
 
 	// Set Rx/Tx buffers as ready
 	for ( uint8_t inter = 0; inter < UART_Num_Interfaces; inter++ )
 	{
-		uart_tx_status[ inter ].status = UARTStatus_Ready;
 		uart_rx_buf[ inter ].last_read = UART_Buffer_Size;
 	}
 }
@@ -883,38 +796,25 @@ void Connect_setup( uint8_t master )
 	// Check if master
    Connect_set_master(master);
 
-   slave_handle = uart_config(UART_Slave, Connect_baud);
-   if (slave_handle == NULL)
-   {
-		erro_print("Unable to setup slave uart connection...");
-      return;
-   }
-
-   master_handle = uart_config(UART_Master, Connect_baud);
-   if (master_handle == NULL)
-   {
-		erro_print("Unable to setup master uart connection...");
-      return;
-   }
-
    error_code_t err;
-   err = uart_rx_dma_setup(0, slave_handle, (uint32_t*)uart_rx_buf[UART_Slave].buffer, UART_Buffer_Size);
+   err = upipe_init(&slave_pipe, UART_Slave, Connect_baud, UART_Buffer_Size);
    if (err != SUCCESS)
    {
-      erro_print("Failed to setup DMA channel for for slave uart...");
-      printHex32(err);
-      return;
-   }
-   err = uart_rx_dma_setup(1, master_handle, (uint32_t*)uart_rx_buf[UART_Master].buffer, UART_Buffer_Size);
-   if (err != SUCCESS)
-   {
-      erro_print("Failed to setup DMA channel for for master uart...");
+      erro_print("Failed to setup slave uart...");
       printHex32(err);
       return;
    }
 
-   uart_start(slave_handle);
-   uart_start(master_handle);
+   err = upipe_init(&master_pipe, UART_Master, Connect_baud, UART_Buffer_Size);
+   if (err != SUCCESS)
+   {
+      erro_print("Failed to setup slave uart...");
+      printHex32(err);
+      return;
+   }
+
+   slave_handle = slave_pipe.uart_handle;
+   master_handle = master_pipe.uart_handle;
 
 	// UARTs are now ready to go
 	uarts_configured = 1;
@@ -1088,7 +988,7 @@ void Connect_scan()
 		Connect_lastCheck = current_time;
 
 		// Send a cable check command of 2 bytes
-		Connect_send_CableCheck( UARTConnectCableCheckLength_define );
+		Connect_send_CableCheck();
 
 		// If this is a slave, and we don't have an id yeth
 		// Don't bother sending if there are cable issues
@@ -1105,8 +1005,8 @@ void Connect_scan()
 		// This happens if there was previously nothing to send
       //uart_fillTxFifo(UART_Slave, slave_handle);
       //uart_fillTxFifo(UART_Master, master_handle);
-      uart_fillTxFifo(UART_Slave, slave_handle);
-      uart_fillTxFifo(UART_Master, master_handle);
+      upipe_process(&slave_pipe);
+      upipe_process(&master_pipe);
 
 		// Process Rx Buffers
 		Connect_rx_process( 0 );
@@ -1138,7 +1038,7 @@ void cliFunc_connectCmd( char* args )
 	switch ( numToInt( &arg1Ptr[0] ) )
 	{
 	case CableCheck:
-		Connect_send_CableCheck( UARTConnectCableCheckLength_define );
+		Connect_send_CableCheck();
 		break;
 
 	case IdRequest:

@@ -17,6 +17,9 @@ set ( SubModule 1 )
 # Module C files
 #
 set ( Module_SRCS
+   uart.c
+   dma.c
+   uart_message_pipe.c
 	connect_scan.c
 )
 

@@ -13,8 +13,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
-#ifndef ERROR_H__
-#define ERROR_H__
+
+#pragma once
 
 typedef enum
 {
@@ -27,4 +27,3 @@ typedef enum
    RING_BUFFER_EMPTY       = 0x06,
 } error_code_t;
 
-#endif

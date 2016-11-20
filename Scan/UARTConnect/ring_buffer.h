@@ -14,8 +14,7 @@
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef RING_BUFFER_H__
-#define RING_BUFFER_H__
+#pragma once
 
 #include "error.h"
 
@@ -96,6 +95,4 @@ inline uint8_t ring_buffer_empty(const ring_buffer_handle handle)
    const ring_buffer_t *buf = (const ring_buffer_t*)handle;
    return buf->tail == buf->head;
 }
-
-#endif
 

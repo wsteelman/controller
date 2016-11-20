@@ -1,3 +1,5 @@
+This is a copy of the actual Kiibohd Controller, see https://github.com/kiibohd/controller for the un-modified code-base.
+
 The Kiibohd Controller
 ======================
 

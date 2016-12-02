@@ -11,7 +11,8 @@ typedef enum UARTStatus {
    UARTStatus_SYN     = 1, // Rx: SYN Received, waiting for SOH
    UARTStatus_SOH     = 2, // Rx: SOH Received, waiting for Command
    UARTStatus_Command = 3, // Rx: Command Received, waiting for data
-   UARTStatus_Ready   = 4, // Tx: Ready to send commands
+   UARTStatus_Data    = 4, // Rx: Command Received, waiting for data
+   UARTStatus_Ready   = 5, // Tx: Ready to send commands
 } UARTStatus;
 
 typedef struct uart_ring_buf_t {
@@ -46,6 +47,8 @@ typedef struct uart_message_pipe_t
    uart_ring_buf_t      tx_buf;
    uart_status_rx_t     rx_status;
    uart_dma_buf_t       rx_buf;
+   uint8_t              rx_msg[256];
+   uint8_t              rx_msg_index;
 } uart_message_pipe_t;
 
 void upipe_enable_debug(uint8_t debug);
@@ -55,17 +58,15 @@ error_code_t upipe_reset(uart_message_pipe_t *pipe, uint8_t capcity);
 error_code_t upipe_init(uart_message_pipe_t *pipe, uint8_t uart_id,
                         uint8_t baud, uint8_t buffer_size);
 
-error_code_t upipe_send_msg(uart_message_pipe_t *pipe, msg_header *hdr, uint8_t bytes);
+error_code_t upipe_send_msg(uart_message_pipe_t *pipe, msg_header *hdr);
 
-error_code_t upipe_msg_start(uart_message_pipe_t *pipe, msg_header *hdr);
-
-error_code_t upipe_msg_add(uart_message_pipe_t *pipe, uint8_t *data, uint8_t count);
-
-error_code_t upipe_msg_end(uart_message_pipe_t *pipe);
+error_code_t upipe_send_variable_msg(uart_message_pipe_t *pipe, msg_header *hdr, const uint8_t *var, uint8_t var_size);
 
 error_code_t upipe_process(uart_message_pipe_t *pipe);
+
+error_code_t upipe_send_idle(uart_message_pipe_t *pipe, uint8_t len);
 
 //void register_callback(command cmd, func);
 
 // temp functions for transition
-error_code_t upipe_send_bytes(uart_message_pipe_t *pipe, uint8_t *buffer, uint8_t count);
+error_code_t upipe_send_bytes(uart_message_pipe_t *pipe, const uint8_t *buffer, uint8_t count);

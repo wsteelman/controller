@@ -38,7 +38,7 @@ typedef struct msg_header
 {
    uint8_t syn;
    uint8_t soh;
-   //uint8_t bytes;
+   uint8_t bytes;
    command cmd;
 } msg_header;
 

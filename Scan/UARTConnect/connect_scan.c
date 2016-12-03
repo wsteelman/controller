@@ -72,17 +72,18 @@ typedef struct UARTStatusTx {
 
 // ----- Messages -----
 
-typedef struct simple_msg_t
-{
-   msg_header     header;
-} simple_msg_t;
-
 typedef struct cable_check_msg_t
 {
    msg_header     header;
    uint8_t        len;
    uint8_t        pattern[UARTConnectCableCheckLength_define];
 } cable_check_msg_t;
+
+typedef struct id_request_msg_t
+{
+   msg_header     header;
+   uint8_t        payload;
+} id_request_msg_t;
 
 typedef struct id_enum_msg_t
 {
@@ -101,7 +102,7 @@ typedef struct scan_code_msg_t
    msg_header     header;
    uint8_t        id;
    uint8_t        count;
-   uint8_t        codes[];
+   TriggerGuide   codes[];
 } scan_code_msg_t;
 
 typedef struct animation_msg_t
@@ -124,13 +125,12 @@ typedef struct remote_capability_msg_t
 } remote_capability_msg_t;
 
 cable_check_msg_t       cable_check_msg         = { {CmdCommand_SYN, 0x01, sizeof(cable_check_msg_t), CmdCableCheck}, UARTConnectCableCheckLength_define, {0xD2}};
-simple_msg_t            id_request_msg          = { {CmdCommand_SYN, 0x01, sizeof(simple_msg_t), CmdIdRequest} };
+id_request_msg_t        id_request_msg          = { {CmdCommand_SYN, 0x01, sizeof(id_request_msg_t), CmdIdRequest}, 0x00 };
 id_enum_msg_t           id_enum_msg             = { {CmdCommand_SYN, 0x01, sizeof(id_enum_msg_t), CmdIdEnumeration}, 0xFF};
 id_report_msg_t         id_report_msg           = { {CmdCommand_SYN, 0x01, sizeof(id_report_msg_t), CmdIdReport}, 0xFF};
 scan_code_msg_t         scan_code_msg           = { {CmdCommand_SYN, 0x01, sizeof(scan_code_msg_t), CmdScanCode}, 0xFF, 0};
 animation_msg_t         animation_msg           = { {CmdCommand_SYN, 0x01, sizeof(animation_msg_t), CmdAnimation}, 0xFF, 0};
 remote_capability_msg_t remote_capability_msg   = { {CmdCommand_SYN, 0x01, sizeof(remote_capability_msg_t), CmdRemoteCapability}, 0xFF, 0, 0, 0, 0};
-
 
 // ----- Variables -----
 
@@ -167,54 +167,9 @@ uint8_t Connect_override = 0;   // Prevents master from automatically being set
 
 volatile uint8_t uarts_configured = 0;
 
-
-// -- Rx Variables --
-
-uart_dma_buf_t *      uart_rx_buf[UART_Num_Interfaces];
-volatile UARTStatusRx uart_rx_status[UART_Num_Interfaces];
-
-
-// -- Tx Variables --
-
-UARTStatusTx uart_tx_status[UART_Num_Interfaces];
-
 // -- UART Variables --
-uart_handle_t slave_handle = NULL;
-uart_handle_t master_handle = NULL;
 uart_message_pipe_t slave_pipe;
 uart_message_pipe_t master_pipe;
-
-
-// -- Ring Buffer Convenience Functions --
-void uart_lockTx( uint8_t uartNum )
-{
-   // TODO This code does not actually guarantee mutual exclusion, need to get better mutex
-   // ARM synchronization primitives: http://infocenter.arm.com/help/topic/com.arm.doc.dht0008a/DHT0008A_arm_synchronization_primitives.pdf
-
-   /* First, secure place in line for the resource */
-   while ( uart_tx_status[ uartNum ].lock );
-   uart_tx_status[ uartNum ].lock = 1;
-   /* Next, wait unit the UART is ready */
-   while ( uart_tx_status[ uartNum ].status != UARTStatus_Ready );
-   uart_tx_status[ uartNum ].status = UARTStatus_Wait;
-}
-
-void uart_unlockTx( uint8_t uartNum )
-{
-   /* Ready the UART */
-   uart_tx_status[ uartNum ].status = UARTStatus_Ready;
-   /* Unlock the resource */
-   uart_tx_status[ uartNum ].lock = 0;
-}
-
-void Connect_addBytes( uint8_t *buffer, uint8_t count, uint8_t uart )
-{
-   if (uart == UART_Slave)
-      upipe_send_bytes(&slave_pipe, buffer, count);
-   else if (uart == UART_Master)
-      upipe_send_bytes(&master_pipe, buffer, count);
-}
-
 
 // -- Connect send functions --
 
@@ -316,7 +271,6 @@ void Connect_send_Idle( uint8_t num )
    upipe_send_idle(&slave_pipe, num);
 }
 
-
 // -- Connect receive functions --
 
 // - Cable Check variables -
@@ -327,113 +281,84 @@ uint32_t Connect_cableChecksSlave  = 0;
 uint8_t  Connect_cableOkMaster = 0;
 uint8_t  Connect_cableOkSlave  = 0;
 
-uint8_t Connect_receive_CableCheck( uint8_t byte, uint16_t *pending_bytes, uint8_t uart_num )
+uint8_t Connect_receive_slave_CableCheck( const msg_header* hdr )
 {
-   // Check if this is the first byte
-   if ( *pending_bytes == 0xFFFF )
+   const cable_check_msg_t *msg = (cable_check_msg_t*)hdr;
+   for (uint8_t i = 0; i < msg->len; ++i)
    {
-      *pending_bytes = byte;
-
-      if ( Connect_debug )
-      {
-         dbug_msg("PENDING SET -> ");
-         printHex( byte );
-         print(" ");
-         printHex( *pending_bytes );
-         print( NL );
-      }
-   }
-   // Verify byte
-   else
-   {
-      (*pending_bytes)--;
-
-      // The argument bytes are always 0xD2 (11010010)
-      if ( byte != 0xD2 )
+      if (msg->pattern[i] != 0xD2)
       {
          warn_print("Cable Fault!");
 
-         // Check which side of the chain
-         if ( uart_num == UART_Slave )
-         {
-            Connect_cableFaultsSlave++;
-            Connect_cableOkSlave = 0;
-            print(" Slave ");
-         }
-         else
-         {
-            // Lower current requirement during errors
-            // USB minimum
-            // Only if this is not the master node
-            if ( Connect_id != 0 )
-            {
-               Output_update_external_current( 100 );
-            }
-
-            Connect_cableFaultsMaster++;
-            Connect_cableOkMaster = 0;
-            print(" Master ");
-         }
-         printHex( byte );
+         Connect_cableFaultsSlave++;
+         Connect_cableOkSlave = 0;
+         print(" Slave ");
          print( NL );
 
-         // Signal that the command should wait for a SYN again
-         return 1;
+         return SUCCESS;
       }
       else
-      {
-         // Check which side of the chain
-         if ( uart_num == UART_Slave )
-         {
-            Connect_cableChecksSlave++;
-         }
-         else
-         {
-            // If we already have an Id, then set max current again
-            if ( Connect_id != 255 && Connect_id != 0 )
-            {
-               // TODO reset to original negotiated current
-               Output_update_external_current( 500 );
-            }
-            Connect_cableChecksMaster++;
-         }
-      }
+         Connect_cableChecksSlave++;
    }
 
-   // If cable check was successful, set cable ok
-   if ( *pending_bytes == 0 )
-   {
-      if ( uart_num == UART_Slave )
-      {
-         Connect_cableOkSlave = 1;
-      }
-      else
-      {
-         Connect_cableOkMaster = 1;
-      }
-   }
+   Connect_cableOkSlave = 1;
 
    if ( Connect_debug )
    {
-      dbug_msg("CABLECHECK RECEIVE - ");
-      printHex( byte );
-      print(" ");
-      printHex( *pending_bytes );
-      print( NL );
+      dbug_msg("CABLECHECK RECEIVE");
    }
+   return SUCCESS;
 
-   // Check whether the cable check has finished
-   return *pending_bytes == 0 ? 1 : 0;
 }
 
-uint8_t Connect_receive_IdRequest( uint8_t byte, uint16_t *pending_bytes, uint8_t uart_num )
+uint8_t Connect_receive_master_CableCheck( const msg_header* hdr )
+{
+   const cable_check_msg_t *msg = (cable_check_msg_t*)hdr;
+   for (uint8_t i = 0; i < msg->len; ++i)
+   {
+      if (msg->pattern[i] != 0xD2)
+      {
+         warn_print("Cable Fault!");
+
+         // Lower current requirement during errors
+         // USB minimum
+         // Only if this is not the master node
+         if ( Connect_id != 0 )
+         {
+            Output_update_external_current( 100 );
+         }
+
+         Connect_cableFaultsMaster++;
+         Connect_cableOkMaster = 0;
+         print(" Master ");
+         print( NL );
+
+         return SUCCESS;
+      }
+      else
+      {
+         // If we already have an Id, then set max current again
+         if ( Connect_id != 255 && Connect_id != 0 )
+         {
+            // TODO reset to original negotiated current
+            Output_update_external_current( 500 );
+         }
+         Connect_cableChecksMaster++;
+      }
+   }
+
+   Connect_cableOkMaster = 1;
+
+   if ( Connect_debug )
+   {
+      dbug_msg("CABLECHECK RECEIVE");
+   }
+   return SUCCESS;
+}
+
+uint8_t Connect_receive_slave_IdRequest( const msg_header *hdr )
 {
    dbug_print("IdRequest");
-   // Check the directionality
-   if ( uart_num == UART_Master )
-   {
-      erro_print("Invalid IdRequest direction...");
-   }
 
    // Check if master, begin IdEnumeration
    if ( Connect_master )
@@ -447,24 +372,35 @@ uint8_t Connect_receive_IdRequest( uint8_t byte, uint16_t *pending_bytes, uint8_
    {
       Connect_send_IdRequest();
    }
-
-   return 1;
+   return SUCCESS;
 }
 
-uint8_t Connect_receive_IdEnumeration( uint8_t id, uint16_t *pending_bytes, uint8_t uart_num )
+
+uint8_t Connect_receive_master_IdRequest( const msg_header *hdr )
+{
+   dbug_print("IdRequest");
+   erro_print("Invalid IdRequest direction...");
+   return SUCCESS;
+}
+
+uint8_t Connect_receive_slave_IdEnumeration( const msg_header *hdr )
 {
    dbug_print("IdEnumeration");
-   // Check the directionality
-   if ( uart_num == UART_Slave )
-   {
-      erro_print("Invalid IdEnumeration direction...");
-   }
+   erro_print("Invalid IdEnumeration direction...");
+   return SUCCESS;
+}
+
+uint8_t Connect_receive_master_IdEnumeration( const msg_header *hdr )
+{
+   dbug_print("IdEnumeration");
+
+   const id_enum_msg_t *msg = (const id_enum_msg_t*)hdr;
 
    // Set the device id
-   Connect_id = id;
+   Connect_id = msg->id;
 
    // Send reponse back to master
-   Connect_send_IdReport( id );
+   Connect_send_IdReport( msg->id );
 
    // Node now enumerated, set external power to USB Max
    // Only set if this is not the master node
@@ -477,274 +413,138 @@ uint8_t Connect_receive_IdEnumeration( uint8_t id, uint16_t *pending_bytes, uint
    // Propogate next Id if the connection is ok
    if ( Connect_cableOkSlave )
    {
-      Connect_send_IdEnumeration( id + 1 );
+      Connect_send_IdEnumeration( msg->id + 1 );
    }
 
-   return 1;
+   return SUCCESS;
 }
 
-uint8_t Connect_receive_IdReport( uint8_t id, uint16_t *pending_bytes, uint8_t uart_num )
+uint8_t Connect_receive_IdReport( const msg_header *hdr )
 {
    dbug_print("IdReport");
-   // Check the directionality
-   if ( uart_num == UART_Master )
-   {
-      erro_print("Invalid IdRequest direction...");
-   }
+
+   const id_report_msg_t *msg = (const id_report_msg_t*)hdr;
 
    // Track Id response if master
    if ( Connect_master )
    {
       info_msg("Id Reported: ");
-      printHex( id );
+      printHex( msg->id );
       print( NL );
 
       // Check if this is the highest ID
-      if ( id > Connect_maxId )
-         Connect_maxId = id;
-      return 1;
+      if ( msg->id > Connect_maxId )
+         Connect_maxId = msg->id;
+      return SUCCESS;
    }
    // Propagate id if yet another slave
    else
    {
-      Connect_send_IdReport( id );
+      Connect_send_IdReport( msg->id );
    }
 
-   return 1;
+   return SUCCESS;
 }
 
-// - Scan Code Variables -
-TriggerGuide Connect_receive_ScanCodeBuffer;
-uint8_t Connect_receive_ScanCodeBufferPos;
-uint8_t Connect_receive_ScanCodeDeviceId;
-
-uint8_t Connect_receive_ScanCode( uint8_t byte, uint16_t *pending_bytes, uint8_t uart_num )
+uint8_t Connect_receive_master_ScanCode( const msg_header *hdr )
 {
-   // Check the directionality
-   if ( uart_num == UART_Master )
-   {
-      erro_print("Invalid ScanCode direction...");
-   }
+   erro_print("Invalid ScanCode direction...");
+   return SUCCESS;
+}
+
+uint8_t Connect_receive_slave_ScanCode( const msg_header *hdr )
+{
+   const scan_code_msg_t *msg = (const scan_code_msg_t *)hdr;
 
    // Master node, trigger scan codes
-   if ( Connect_master ) switch ( (*pending_bytes)-- )
+   if ( Connect_master )
    {
-   // Byte count always starts at 0xFFFF
-   case 0xFFFF: // Device Id
-      Connect_receive_ScanCodeDeviceId = byte;
-      break;
-
-   case 0xFFFE: // Number of TriggerGuides in bytes (byte * 3)
-      *pending_bytes = byte * sizeof( TriggerGuide );
-      Connect_receive_ScanCodeBufferPos = 0;
-      break;
-
-   default:
-      // Set the specific TriggerGuide entry
-      ((uint8_t*)&Connect_receive_ScanCodeBuffer)[ Connect_receive_ScanCodeBufferPos++ ] = byte;
-
-      // Reset the BufferPos if higher than sizeof TriggerGuide
-      // And send the TriggerGuide to the Macro Module
-      if ( Connect_receive_ScanCodeBufferPos >= sizeof( TriggerGuide ) )
+      for (uint8_t i = 0; i < msg->count; ++i)
       {
-         Connect_receive_ScanCodeBufferPos = 0;
-
+         TriggerGuide guide = msg->codes[i];
          // Adjust ScanCode offset
-         if ( Connect_receive_ScanCodeDeviceId > 0 )
+         if ( msg->id > 0 )
          {
             // Check if this node is too large
-            if ( Connect_receive_ScanCodeDeviceId >= InterconnectNodeMax )
+            if ( msg->id >= InterconnectNodeMax )
             {
                warn_msg("Not enough interconnect layout nodes configured: ");
-               printHex( Connect_receive_ScanCodeDeviceId );
+               printHex( msg->id );
                print( NL );
                break;
             }
 
             // This variable is in generatedKeymaps.h
             extern uint8_t InterconnectOffsetList[];
-            Connect_receive_ScanCodeBuffer.scanCode = Connect_receive_ScanCodeBuffer.scanCode + InterconnectOffsetList[ Connect_receive_ScanCodeDeviceId - 1 ];
+            guide.scanCode += InterconnectOffsetList[ msg->id - 1 ];
          }
 
          // ScanCode receive debug
          if ( Connect_debug )
          {
             dbug_msg("");
-            printHex( Connect_receive_ScanCodeBuffer.type );
+            printHex( guide.type );
             print(" ");
-            printHex( Connect_receive_ScanCodeBuffer.state );
+            printHex( guide.state );
             print(" ");
-            printHex( Connect_receive_ScanCodeBuffer.scanCode );
+            printHex( guide.scanCode );
             print( NL );
          }
 
          // Send ScanCode to macro module
-         Macro_pressReleaseAdd( &Connect_receive_ScanCodeBuffer );
+         Macro_pressReleaseAdd( &guide );
       }
-
-      break;
    }
    // Propagate ScanCode packet
-   // XXX It would be safer to buffer the scancodes first, before transmitting the packet -Jacob
-   //     The current method is the more efficient/aggressive, but could cause issues if there were errors during transmission
-   else switch ( (*pending_bytes)-- )
-   {
-   // Byte count always starts at 0xFFFF
-   case 0xFFFF: // Device Id
-   {
-      Connect_receive_ScanCodeDeviceId = byte;
+   else
+      upipe_send_msg(&master_pipe, hdr);
 
-      // Lock the master Tx buffer
-      uart_lockTx( UART_Master );
-
-      // Send header + Id byte
-      uint8_t header[] = { 0x16, 0x01, ScanCode, byte };
-      Connect_addBytes( header, sizeof( header ), UART_Master );
-      break;
-   }
-   case 0xFFFE: // Number of TriggerGuides in bytes
-      *pending_bytes = byte * sizeof( TriggerGuide );
-      Connect_receive_ScanCodeBufferPos = 0;
-
-      // Pass through byte
-      Connect_addBytes( &byte, 1, UART_Master );
-      break;
-
-   default:
-      // Pass through byte
-      Connect_addBytes( &byte, 1, UART_Master );
-
-      // Unlock Tx Buffer after sending last byte
-      if ( *pending_bytes == 0 )
-         uart_unlockTx( UART_Master );
-      break;
-   }
-
-   // Check whether the scan codes have finished sending
-   return *pending_bytes == 0 ? 1 : 0;
+   return SUCCESS;
 }
 
-uint8_t Connect_receive_Animation( uint8_t byte, uint16_t *pending_bytes, uint8_t uart_num )
+uint8_t Connect_receive_Animation( const msg_header *hdr )
 {
    dbug_print("Animation");
-   return 1;
+   return SUCCESS;
 }
 
-// - Remote Capability Variables -
-#define Connect_receive_RemoteCapabilityMaxArgs 25 // XXX Calculate the max using kll
-RemoteCapabilityCommand Connect_receive_RemoteCapabilityBuffer;
-uint8_t Connect_receive_RemoteCapabilityArgs[Connect_receive_RemoteCapabilityMaxArgs];
-
-uint8_t Connect_receive_RemoteCapability( uint8_t byte, uint16_t *pending_bytes, uint8_t uart_num )
+uint8_t Connect_receive_RemoteCapability( const msg_header * hdr, uart_message_pipe_t *opposite_pipe)
 {
-   // Check which byte in the packet we are at
-   switch ( (*pending_bytes)-- )
+   const remote_capability_msg_t *msg = (const remote_capability_msg_t *) hdr;
+   // Determine if this is the node to run the capability on
+   // Conditions: Matches or broadcast (0xFF)
+   if ( msg->id == 0xFF || msg->id == Connect_id )
    {
-   // Byte count always starts at 0xFFFF
-   case 0xFFFF: // Device Id
-      Connect_receive_RemoteCapabilityBuffer.id = byte;
-      break;
-
-   case 0xFFFE: // Capability Index
-      Connect_receive_RemoteCapabilityBuffer.capabilityIndex = byte;
-      break;
-
-   case 0xFFFD: // State
-      Connect_receive_RemoteCapabilityBuffer.state = byte;
-      break;
-
-   case 0xFFFC: // StateType
-      Connect_receive_RemoteCapabilityBuffer.stateType = byte;
-      break;
-
-   case 0xFFFB: // Number of args
-      Connect_receive_RemoteCapabilityBuffer.numArgs = byte;
-      *pending_bytes = byte;
-      break;
-
-   default:     // Args (# defined by previous byte)
-      Connect_receive_RemoteCapabilityArgs[
-         Connect_receive_RemoteCapabilityBuffer.numArgs - *pending_bytes + 1
-      ] = byte;
-
-      // If entire packet has been fully received
-      if ( *pending_bytes == 0 )
-      {
-         // Determine if this is the node to run the capability on
-         // Conditions: Matches or broadcast (0xFF)
-         if ( Connect_receive_RemoteCapabilityBuffer.id == 0xFF
-            || Connect_receive_RemoteCapabilityBuffer.id == Connect_id )
-         {
-            extern const Capability CapabilitiesList[]; // See generatedKeymap.h
-            void (*capability)(uint8_t, uint8_t, uint8_t*) = (void(*)(uint8_t, uint8_t, uint8_t*))(
-               CapabilitiesList[ Connect_receive_RemoteCapabilityBuffer.capabilityIndex ].func
-            );
-            capability(
-               Connect_receive_RemoteCapabilityBuffer.state,
-               Connect_receive_RemoteCapabilityBuffer.stateType,
-               &Connect_receive_RemoteCapabilityArgs[2]
-            );
-         }
-
-         // If this is not the correct node, keep sending it in the same direction (doesn't matter if more nodes exist)
-         // or if this is a broadcast
-         if ( Connect_receive_RemoteCapabilityBuffer.id == 0xFF
-            || Connect_receive_RemoteCapabilityBuffer.id != Connect_id )
-         {
-            // Prepare outgoing packet
-            Connect_receive_RemoteCapabilityBuffer.command = RemoteCapability;
-
-            // Send to the other UART (not the one receiving the packet from
-            uint8_t uart_direction = uart_num == UART_Master ? UART_Slave : UART_Master;
-
-            // Lock Tx UART
-            switch ( uart_direction )
-            {
-            case UART_Master: uart_lockTx( UART_Master ); break;
-            case UART_Slave:  uart_lockTx( UART_Slave );  break;
-            }
-
-            // Send header
-            uint8_t header[] = { 0x16, 0x01 };
-            Connect_addBytes( header, sizeof( header ), uart_direction );
-
-            // Send Remote Capability and arguments
-            Connect_addBytes( (uint8_t*)&Connect_receive_RemoteCapabilityBuffer, sizeof( RemoteCapabilityCommand ), uart_direction );
-            Connect_addBytes( Connect_receive_RemoteCapabilityArgs, Connect_receive_RemoteCapabilityBuffer.numArgs, uart_direction );
-
-            // Unlock Tx UART
-            switch ( uart_direction )
-            {
-            case UART_Master: uart_unlockTx( UART_Master ); break;
-            case UART_Slave:  uart_unlockTx( UART_Slave );  break;
-            }
-         }
-      }
-      break;
+      extern const Capability CapabilitiesList[]; // See generatedKeymap.h
+      void (*capability)(uint8_t, uint8_t, const uint8_t*) = (void(*)(uint8_t, uint8_t, const uint8_t*))(
+         CapabilitiesList[ msg->capability_index ].func
+      );
+      capability(msg->state, msg->state_type, &msg->args[0]);
    }
 
-   // Check whether the scan codes have finished sending
-   return *pending_bytes == 0 ? 1 : 0;
+   // If this is not the correct node, keep sending it in the same direction (doesn't matter if more nodes exist)
+   // or if this is a broadcast
+   if ( msg->id == 0xFF || msg->id != Connect_id )
+   {
+      upipe_send_msg(opposite_pipe, hdr);
+   }
+
+   return SUCCESS;
 }
 
+uint8_t Connect_receive_slave_RemoteCapability( const msg_header * hdr )
+{
+   return Connect_receive_RemoteCapability(hdr, &master_pipe);
+}
+uint8_t Connect_receive_master_RemoteCapability( const msg_header * hdr )
+{
+   return Connect_receive_RemoteCapability(hdr, &slave_pipe);
+}
 
 // Baud Rate
 // NOTE: If finer baud adjustment is needed see UARTx_C4 -> BRFA in the datasheet
 uint16_t Connect_baud = UARTConnectBaud_define; // Max setting of 8191
 uint16_t Connect_baudFine = UARTConnectBaudFine_define;
-
-// Connect receive function lookup
-void *Connect_receiveFunctions[] = {
-   Connect_receive_CableCheck,
-   Connect_receive_IdRequest,
-   Connect_receive_IdEnumeration,
-   Connect_receive_IdReport,
-   Connect_receive_ScanCode,
-   Connect_receive_Animation,
-   Connect_receive_RemoteCapability,
-};
-
-
 
 // ----- Functions -----
 
@@ -753,19 +553,6 @@ void Connect_reset()
 {
    upipe_reset(&slave_pipe, UART_Buffer_Size);
    upipe_reset(&master_pipe, UART_Buffer_Size);
-
-   // Reset Rx
-   memset( (void*)uart_rx_status, 0, sizeof( UARTStatusRx ) * UART_Num_Interfaces );
-
-   // Reset Tx
-   memset( (void*)uart_tx_status, 0, sizeof( UARTStatusTx ) * UART_Num_Interfaces );
-
-   // Set Rx/Tx buffers as ready
-   for ( uint8_t inter = 0; inter < UART_Num_Interfaces; inter++ )
-   {
-      uart_tx_status[ inter ].status = UARTStatus_Ready;
-      uart_rx_buf[ inter ]->last_read = UART_Buffer_Size;
-   }
 }
 
 void Connect_set_master( uint8_t master )
@@ -810,10 +597,23 @@ void Connect_setup( uint8_t master )
       return;
    }
 
-   slave_handle = slave_pipe.uart_handle;
-   master_handle = master_pipe.uart_handle;
-   uart_rx_buf[UART_Slave] = &slave_pipe.rx_buf;
-   uart_rx_buf[UART_Master] = &master_pipe.rx_buf;
+   // register slave pipe callbacks
+   upipe_register_callback(&slave_pipe, CmdCableCheck,         &Connect_receive_slave_CableCheck);
+   upipe_register_callback(&slave_pipe, CmdIdRequest,          &Connect_receive_slave_IdRequest);
+   upipe_register_callback(&slave_pipe, CmdIdEnumeration,      &Connect_receive_slave_IdEnumeration);
+   upipe_register_callback(&slave_pipe, CmdIdReport,           &Connect_receive_IdReport);
+   upipe_register_callback(&slave_pipe, CmdScanCode,           &Connect_receive_slave_ScanCode);
+   upipe_register_callback(&slave_pipe, CmdAnimation,          &Connect_receive_Animation);
+   upipe_register_callback(&slave_pipe, CmdRemoteCapability,   &Connect_receive_slave_RemoteCapability);
+
+   // register master pipe callbacks
+   upipe_register_callback(&master_pipe, CmdCableCheck,        &Connect_receive_master_CableCheck);
+   upipe_register_callback(&master_pipe, CmdIdRequest,         &Connect_receive_master_IdRequest);
+   upipe_register_callback(&master_pipe, CmdIdEnumeration,     &Connect_receive_master_IdEnumeration);
+   upipe_register_callback(&master_pipe, CmdIdReport,          &Connect_receive_IdReport);
+   upipe_register_callback(&master_pipe, CmdScanCode,          &Connect_receive_slave_ScanCode);
+   upipe_register_callback(&master_pipe, CmdAnimation,         &Connect_receive_Animation);
+   upipe_register_callback(&master_pipe, CmdRemoteCapability,  &Connect_receive_master_RemoteCapability);
 
    // UARTs are now ready to go
    uarts_configured = 1;
@@ -821,152 +621,6 @@ void Connect_setup( uint8_t master )
    // Reset the state of the UART variables
    Connect_reset();
 }
-
-
-#define DMA_BUF_POS( x, pos ) \
-   case x: \
-      pos = DMA_TCD##x##_CITER_ELINKNO; \
-      break
-void Connect_rx_process( uint8_t uartNum )
-{
-   // Determine current position to read until
-   uint16_t bufpos = 0;
-   switch ( uartNum )
-   {
-   DMA_BUF_POS( 0, bufpos );
-   DMA_BUF_POS( 1, bufpos );
-   }
-
-   // Process each of the new bytes
-   // Even if we receive more bytes during processing, wait until the next check so we don't starve other tasks
-   while ( bufpos != uart_rx_buf[ uartNum ]->last_read )
-   {
-      // If the last_read byte is at the buffer edge, roll back to beginning
-      if ( uart_rx_buf[ uartNum ]->last_read == 0 )
-      {
-         uart_rx_buf[ uartNum ]->last_read = UART_Buffer_Size;
-
-         // Check to see if we're at the boundary
-         if ( bufpos == UART_Buffer_Size )
-            break;
-      }
-
-      // Read the byte out of Rx DMA buffer
-      uint8_t byte = uart_rx_buf[ uartNum ]->buffer[ UART_Buffer_Size - uart_rx_buf[ uartNum ]->last_read-- ];
-
-      if ( Connect_debug )
-      {
-         printHex( byte );
-         print(" ");
-      }
-
-      // Process UART byte
-      switch ( uart_rx_status[ uartNum ].status )
-      {
-      // Every packet must start with a SYN / 0x16
-      case UARTStatus_Wait:
-         if ( Connect_debug )
-         {
-            print(" Wait ");
-         }
-         uart_rx_status[ uartNum ].status = byte == 0x16 ? UARTStatus_SYN : UARTStatus_Wait;
-         break;
-
-      // After a SYN, there must be a SOH / 0x01
-      case UARTStatus_SYN:
-         if ( Connect_debug )
-         {
-            print(" SYN ");
-         }
-         uart_rx_status[ uartNum ].status = byte == 0x01 ? UARTStatus_SOH : UARTStatus_Wait;
-         break;
-
-      case UARTStatus_SOH:
-         if ( Connect_debug )
-         {
-            print(" Data ");
-         }
-         uart_rx_status[ uartNum ].status = byte > 0x00 ? UARTStatus_Data : UARTStatus_Wait;
-         break;
-
-      // After a SOH the packet structure may diverge a bit
-      // This is the packet type field (refer to the Command enum)
-      // For very small packets (e.g. IdRequest) this is all that's required to take action
-      case UARTStatus_Data:
-      {
-         if ( Connect_debug )
-         {
-            print(" SOH ");
-         }
-
-         // Check if this is actually a reserved CMD 0x16 (Error condition)
-         if ( byte == Command_SYN )
-         {
-            uart_rx_status[ uartNum ].status = UARTStatus_SYN;
-            break;
-         }
-
-         // Otherwise process the command
-         if ( byte < Command_TOP )
-         {
-            uart_rx_status[ uartNum ].status = UARTStatus_Command;
-            uart_rx_status[ uartNum ].command = byte;
-            uart_rx_status[ uartNum ].bytes_waiting = 0xFFFF;
-         }
-         // Invalid packet type, ignore
-         else
-         {
-            uart_rx_status[ uartNum ].status = UARTStatus_Wait;
-         }
-
-         // Check if this is a very short packet
-         switch ( uart_rx_status[ uartNum ].command )
-         {
-         case IdRequest:
-            Connect_receive_IdRequest( 0, (uint16_t*)&uart_rx_status[ uartNum ].bytes_waiting, uartNum );
-            uart_rx_status[ uartNum ].status = UARTStatus_Wait;
-            break;
-
-         default:
-            if ( Connect_debug )
-            {
-               print(" ### ");
-               printHex( uart_rx_status[ uartNum ].command );
-            }
-            break;
-         }
-         break;
-      }
-
-      // After the packet type has been deciphered do Command specific processing
-      // Until the Command has received all the bytes it requires the UART buffer stays in this state
-      case UARTStatus_Command:
-      {
-         if ( Connect_debug )
-         {
-            print(" CMD ");
-         }
-         /* Call specific UARTConnect command receive function */
-         uint8_t (*rcvFunc)(uint8_t, uint16_t(*), uint8_t) = (uint8_t(*)(uint8_t, uint16_t(*), uint8_t))(Connect_receiveFunctions[ uart_rx_status[ uartNum ].command ]);
-         if ( rcvFunc( byte, (uint16_t*)&uart_rx_status[ uartNum ].bytes_waiting, uartNum ) )
-            uart_rx_status[ uartNum ].status = UARTStatus_Wait;
-         break;
-      }
-
-      // Unknown status, should never get here
-      default:
-         erro_msg("Invalid UARTStatus...");
-         uart_rx_status[ uartNum ].status = UARTStatus_Wait;
-         continue;
-      }
-
-      if ( Connect_debug )
-      {
-         print( NL );
-      }
-   }
-}
-
 
 // Scan for updates in the master/slave
 // - Interrupts will deal with most input functions
@@ -995,7 +649,7 @@ void Connect_scan()
       Connect_lastCheck = current_time;
 
       // Send a cable check command of 2 bytes
-      Connect_send_CableCheck( UARTConnectCableCheckLength_define );
+      Connect_send_CableCheck();
 
       // If this is a slave, and we don't have an id yeth
       // Don't bother sending if there are cable issues
@@ -1010,14 +664,8 @@ void Connect_scan()
    {
       // Check if Tx Buffers are empty and the Tx Ring buffers have data to send
       // This happens if there was previously nothing to send
-      //uart_fillTxFifo(UART_Slave, slave_handle);
-      //uart_fillTxFifo(UART_Master, master_handle);
       upipe_process(&slave_pipe);
       upipe_process(&master_pipe);
-
-      // Process Rx Buffers
-      Connect_rx_process( 0 );
-      Connect_rx_process( 1 );
    }
 }
 
@@ -1045,7 +693,7 @@ void cliFunc_connectCmd( char* args )
    switch ( numToInt( &arg1Ptr[0] ) )
    {
    case CableCheck:
-      Connect_send_CableCheck( UARTConnectCableCheckLength_define );
+      Connect_send_CableCheck();
       break;
 
    case IdRequest:
@@ -1199,19 +847,11 @@ void cliFunc_connectSts( char* args )
    printHex32( Connect_cableFaultsMaster );
    print("/");
    printHex32( Connect_cableChecksMaster );
-   print( NL "\tRx:\t");
-   printHex( uart_rx_status[UART_Master].status );
-   print( NL "\tTx:\t");
-   printHex( uart_tx_status[UART_Master].status );
    print( NL "Slave <=" NL "\tStatus:\t");
    printHex( Connect_cableOkSlave );
    print( NL "\tFaults:\t");
    printHex32( Connect_cableFaultsSlave );
    print("/");
    printHex32( Connect_cableChecksSlave );
-   print( NL "\tRx:\t");
-   printHex( uart_rx_status[UART_Slave].status );
-   print( NL "\tTx:\t");
-   printHex( uart_tx_status[UART_Slave].status );
 }
 

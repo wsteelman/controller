@@ -97,7 +97,7 @@ void upipe_rx_process(uart_message_pipe_t *pipe)
       }
 
       // Process UART byte
-      switch ( pipe->rx_status.status )
+      switch ( pipe->rx_status )
       {
       // Every packet must start with a SYN / 0x16
       case UARTStatus_Wait:
@@ -105,8 +105,8 @@ void upipe_rx_process(uart_message_pipe_t *pipe)
          {
             print(" Wait ");
          }
-         pipe->rx_status.status = byte == 0x16 ? UARTStatus_SYN : UARTStatus_Wait;
-         pipe->rx_msg_index = 0;
+         pipe->rx_status = byte == 0x16 ? UARTStatus_SYN : UARTStatus_Wait;
+         pipe->rx_msg_index = 1;
          pipe->rx_msg[0] = byte;
          break;
 
@@ -116,7 +116,7 @@ void upipe_rx_process(uart_message_pipe_t *pipe)
          {
             print(" SYN ");
          }
-         pipe->rx_status.status = byte == 0x01 ? UARTStatus_SOH : UARTStatus_Wait;
+         pipe->rx_status = byte == 0x01 ? UARTStatus_SOH : UARTStatus_Wait;
          break;
 
       // After a SOH the packet structure may diverge a bit
@@ -128,7 +128,7 @@ void upipe_rx_process(uart_message_pipe_t *pipe)
          {
             print(" SOH ");
          }
-         pipe->rx_status.status = UARTStatus_Data;
+         pipe->rx_status = byte > 0x00 ? UARTStatus_Data : UARTStatus_Wait;
          break;
       }
 
@@ -140,22 +140,29 @@ void upipe_rx_process(uart_message_pipe_t *pipe)
          {
             print(" DATA ");
          }
-         //msg_header *hdr = (msg_header*)pipe->rx_msg;
-         //if (pipe->rx_msg_index == hdr->bytes)
-         //{
-         //   /* Call specific UARTConnect command receive function */
-         //   // TODO: fix
-         //   //uint8_t (*rcvFunc)(uint8_t, uint16_t(*), uint8_t) = (uint8_t(*)(uint8_t, uint16_t(*), uint8_t))(Connect_receiveFunctions[ pipe->rx_status.command ]);
-         //   //if ( rcvFunc( byte, (uint16_t*)&pipe->rx_status.bytes_waiting, uartNum ) )
-         //   pipe->rx_status.status = UARTStatus_Wait;
-         //}
+         pipe->rx_status = UARTStatus_Command;
          break;
       }
 
-      // Unknown status, should never get here
+      case UARTStatus_Command:
+      {
+         msg_header *hdr = (msg_header*)pipe->rx_msg;
+         if (pipe->rx_msg_index >= hdr->bytes)
+         {
+            /* Call specific UARTConnect command receive function */
+            rx_callback_t func = pipe->rx_callbacks[hdr->cmd];
+            func(hdr);
+            pipe->rx_status = UARTStatus_Wait;
+            pipe->rx_msg_index = 0;
+         }
+         break;
+      }
+
+      //// Unknown status, should never get here
       default:
          erro_msg("Invalid UARTStatus...");
-         pipe->rx_status.status = UARTStatus_Wait;
+         pipe->rx_status = UARTStatus_Wait;
+         pipe->rx_msg_index = 0;
          continue;
       }
 
@@ -227,11 +234,13 @@ error_code_t upipe_reset(uart_message_pipe_t *pipe, uint8_t capacity)
    memset( (void*)&pipe->tx_status, 0, sizeof( uart_status_tx_t ) );
    pipe->tx_status.status = UARTStatus_Ready;
    pipe->rx_buf.last_read = UART_Buffer_Size;
+   pipe->rx_status = UARTStatus_Wait;
    return SUCCESS;
 }
 
 error_code_t upipe_init(uart_message_pipe_t *pipe, uint8_t uart_id, uint8_t baud, uint8_t buffer_size)
 {
+   memset(pipe, 0x00, sizeof(uart_message_pipe_t));
    error_code_t err = SUCCESS;
    pipe->configured = 0;
    pipe->id = uart_id;
@@ -259,13 +268,11 @@ error_code_t upipe_init(uart_message_pipe_t *pipe, uint8_t uart_id, uint8_t baud
    return err;
 }
 
-error_code_t upipe_send_msg(uart_message_pipe_t *pipe, msg_header *hdr)
+error_code_t upipe_send_msg(uart_message_pipe_t *pipe, const msg_header *hdr)
 {
    error_code_t err = SUCCESS;
    uart_lock_tx(&pipe->tx_status);
-   hdr->syn = 0x16;
-   hdr->soh = 0x01;
-   err = upipe_send_bytes(pipe, (uint8_t*)hdr, hdr->bytes);
+   err = upipe_send_bytes(pipe, (const uint8_t*)hdr, hdr->bytes);
    // unlock on success or failure
    uart_unlock_tx(&pipe->tx_status);
    return err;
@@ -275,8 +282,6 @@ error_code_t upipe_send_variable_msg(uart_message_pipe_t *pipe, msg_header *hdr,
 {
    error_code_t err = SUCCESS;
    uart_lock_tx(&pipe->tx_status);
-   hdr->syn = 0x16;
-   hdr->soh = 0x01;
 
    uint8_t hdr_size = hdr->bytes;
    hdr->bytes += var_size;
@@ -285,10 +290,10 @@ error_code_t upipe_send_variable_msg(uart_message_pipe_t *pipe, msg_header *hdr,
    {
       hdr->bytes = hdr_size;
       uart_unlock_tx(&pipe->tx_status);
-      return err; 
+      return err;
    }
    err = upipe_send_bytes(pipe, var, var_size);
-   hdr->bytes = hdr_size; 
+   hdr->bytes = hdr_size;
    // unlock on success or failure
    uart_unlock_tx(&pipe->tx_status);
    return err;
@@ -298,20 +303,25 @@ error_code_t upipe_send_variable_msg(uart_message_pipe_t *pipe, msg_header *hdr,
 error_code_t upipe_send_idle(uart_message_pipe_t *pipe, uint8_t len)
 {
    uart_lock_tx(&pipe->tx_status);
-   
+
    uint8_t value = CmdCommand_SYN;
    for (uint8_t i = 0; i < len; ++i)
    {
-      upipe_send_bytes(pipe, &value, 1); 
-   } 
+      upipe_send_bytes(pipe, &value, 1);
+   }
 
    uart_unlock_tx(&pipe->tx_status);
    return SUCCESS;
 }
 
+void upipe_register_callback(uart_message_pipe_t *pipe, command cmd, rx_callback_t func)
+{
+   pipe->rx_callbacks[cmd] = func;
+}
+
 error_code_t upipe_process(uart_message_pipe_t *pipe)
 {
    upipe_tx_process(pipe);
-   //upipe_rx_process(pipe);
+   upipe_rx_process(pipe);
    return SUCCESS;
 }

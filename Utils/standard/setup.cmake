@@ -8,16 +8,12 @@
 
 
 ###
-# Sub-module flag, cannot be included stand-alone
-#
-set ( SubModule 1 )
-
-
-###
 # Module C files
 #
 set ( Module_SRCS
-	connect_scan.c
+   uart.c
+   dma.c
+   uart_message_pipe.c
 )
 
 

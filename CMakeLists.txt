@@ -82,7 +82,10 @@ set(  DebugModule "full"
 	CACHE STRING "Debug Module"
 )
 
-
+##| Utils source to use
+set(  UtilsModule "standard"
+	CACHE STRING "Utils Module"
+)
 
 ###
 # Keymap Configuration (do not include the .kll extension)

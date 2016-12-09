@@ -32,6 +32,7 @@ set(  ScanModulePath    "Scan/${ScanModule}"   )
 set( MacroModulePath   "Macro/${MacroModule}"  )
 set( OutputModulePath "Output/${OutputModule}" )
 set( DebugModulePath   "Debug/${DebugModule}"  )
+set( UtilsModulePath   "Utils/${UtilsModule}"  )
 
 #| Top-level directory adjustment
 set( HEAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}" )
@@ -141,6 +142,7 @@ AddModule ( Scan   ${ScanModule}   1 )
 AddModule ( Macro  ${MacroModule}  1 )
 AddModule ( Output ${OutputModule} 1 )
 AddModule ( Debug  ${DebugModule}  1 )
+AddModule ( Utils  ${UtilsModule}  1 )
 
 
 
@@ -168,6 +170,7 @@ set ( SRCS
 	${Macro_SRCS}
 	${Output_SRCS}
 	${Debug_SRCS}
+   ${Utils_SRCS}
 )
 
 #| Directories to include by default

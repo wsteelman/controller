@@ -89,6 +89,7 @@ typedef struct id_enum_msg_t
 {
    msg_header     header;
    uint8_t        id;
+   uint8_t        enable_master;
 } id_enum_msg_t;
 
 typedef struct id_report_msg_t
@@ -126,7 +127,7 @@ typedef struct remote_capability_msg_t
 
 cable_check_msg_t       cable_check_msg         = { {CmdCommand_SYN, 0x01, sizeof(cable_check_msg_t), CmdCableCheck}, UARTConnectCableCheckLength_define, {0xD2}};
 id_request_msg_t        id_request_msg          = { {CmdCommand_SYN, 0x01, sizeof(id_request_msg_t), CmdIdRequest}, 0x00 };
-id_enum_msg_t           id_enum_msg             = { {CmdCommand_SYN, 0x01, sizeof(id_enum_msg_t), CmdIdEnumeration}, 0xFF};
+id_enum_msg_t           id_enum_msg             = { {CmdCommand_SYN, 0x01, sizeof(id_enum_msg_t), CmdIdEnumeration}, 0xFF, 0x00};
 id_report_msg_t         id_report_msg           = { {CmdCommand_SYN, 0x01, sizeof(id_report_msg_t), CmdIdReport}, 0xFF};
 scan_code_msg_t         scan_code_msg           = { {CmdCommand_SYN, 0x01, sizeof(scan_code_msg_t), CmdScanCode}, 0xFF, 0};
 animation_msg_t         animation_msg           = { {CmdCommand_SYN, 0x01, sizeof(animation_msg_t), CmdAnimation}, 0xFF, 0};
@@ -171,6 +172,13 @@ volatile uint8_t uarts_configured = 0;
 uart_message_pipe_t slave_pipe;
 uart_message_pipe_t master_pipe;
 
+void Connect_set_master( uint8_t master, uint8_t id )
+{
+   // Check if master
+   Connect_master = master;
+   Connect_id = id; // 0x00 is always the master Id
+}
+
 // -- Connect send functions --
 
 // patternLen defines how many bytes should the incrementing pattern have
@@ -192,9 +200,10 @@ void Connect_send_IdRequest()
 }
 
 // id is the value the next slave should enumerate as
-void Connect_send_IdEnumeration( uint8_t id )
+void Connect_send_IdEnumeration( uint8_t id, uint8_t enable_master )
 {
    id_enum_msg.id = id;
+   id_enum_msg.enable_master = enable_master;
    upipe_send_msg(&slave_pipe, &id_enum_msg.header);
 }
 
@@ -365,7 +374,7 @@ uint8_t Connect_receive_slave_IdRequest( const msg_header *hdr )
    {
       // The first device is always id 1
       // Id 0 is reserved for the master
-      Connect_send_IdEnumeration( 1 );
+      Connect_send_IdEnumeration( 1, 0 );
    }
    // Propagate IdRequest
    else
@@ -399,6 +408,8 @@ uint8_t Connect_receive_master_IdEnumeration( const msg_header *hdr )
    // Set the device id
    Connect_id = msg->id;
 
+   Connect_set_master( msg->enable_master, msg->id ); 
+
    // Send reponse back to master
    Connect_send_IdReport( msg->id );
 
@@ -413,7 +424,7 @@ uint8_t Connect_receive_master_IdEnumeration( const msg_header *hdr )
    // Propogate next Id if the connection is ok
    if ( Connect_cableOkSlave )
    {
-      Connect_send_IdEnumeration( msg->id + 1 );
+      Connect_send_IdEnumeration( msg->id + 1, 0 );
    }
 
    return SUCCESS;
@@ -555,16 +566,6 @@ void Connect_reset()
    upipe_reset(&master_pipe, UART_Buffer_Size);
 }
 
-void Connect_set_master( uint8_t master )
-{
-   // Check if master
-   Connect_master = master;
-   if ( Connect_master )
-      Connect_id = 0; // 0x00 is always the master Id
-   else
-      Connect_id = 0xFF;
-}
-
 // Setup connection to other side
 // - Only supports a single slave and master
 // - If USB has been initiallized at this point, this side is the master
@@ -578,7 +579,7 @@ void Connect_setup( uint8_t master )
    CLI_registerDictionary( uartConnectCLIDict, uartConnectCLIDictName );
 
    // Check if master
-   Connect_set_master(master);
+   Connect_set_master(master, master ? 0x00 : 0xFF);
 
    error_code_t err;
    err = upipe_init(&slave_pipe, UART_Slave, Connect_baud, UART_Buffer_Size);
@@ -633,7 +634,7 @@ void Connect_scan()
    // Then reconfigure as a master
    if ( !Connect_master && Output_Available && !Connect_override )
    {
-      Connect_set_master( Output_Available );
+      Connect_set_master( Output_Available, 0x00 );
       Connect_reset();
    }
 
@@ -701,7 +702,7 @@ void cliFunc_connectCmd( char* args )
       break;
 
    case IdEnumeration:
-      Connect_send_IdEnumeration( 5 );
+      Connect_send_IdEnumeration( 5, 0 );
       break;
 
    case IdReport:

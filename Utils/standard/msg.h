@@ -19,16 +19,17 @@
 typedef enum command {
    CmdCableCheck,       // Comm check
 
-   CmdIdRequest,        // Slave initialization (request id from master)
-   CmdIdEnumeration,    // Slave initialization (begin enumeration from master)
-   CmdIdReport,         // Slave initialization complete, report id to master
+   CmdIdRequest,              // Slave initialization (request id from master)
+   CmdIdEnumeration,          // Slave initialization (begin enumeration from master)
+   CmdIdReport,               // Slave initialization complete, report id to master
 
-   CmdScanCode,         // ScanCode event status change
-   CmdAnimation,        // Master trigger animation event (same command is sent back to master when ready)
+   CmdScanCode,               // ScanCode event status change
+   CmdAnimation,              // Master trigger animation event (same command is sent back to master when ready)
 
-   CmdRemoteCapability, // Activate a capability on the given node
-   CmdRemoteOutput,     // Remote debug output from a given node
-   CmdRemoteInput,      // Remote command to send to a given node's debug cli
+   CmdRemoteCapability,       // Activate a capability on the given node
+   CmdRemoteOutput,           // Remote debug output from a given node
+   CmdRemoteInput,            // Remote command to send to a given node's debug cli
+   CmdEnableMaster,           // Enable master on secondary node
 
    CmdCommand_TOP,      // Enum bounds
    CmdCommand_SYN = 0x16, // Reserved for error handling

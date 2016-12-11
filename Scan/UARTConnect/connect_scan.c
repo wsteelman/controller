@@ -51,25 +51,12 @@ void cliFunc_connectMst ( char *args );
 void cliFunc_connectRst ( char *args );
 void cliFunc_connectSts ( char *args );
 
-
-// ----- Structs -----
-
-typedef struct UARTDMABuf {
-   uint8_t  buffer[UART_Buffer_Size];
-   uint16_t last_read;
-} UARTDMABuf;
-
-typedef struct UARTStatusRx {
-   UARTStatus status;
-   Command    command;
-   uint16_t   bytes_waiting;
-} UARTStatusRx;
-
-typedef struct UARTStatusTx {
-   UARTStatus status;
-   uint8_t    lock;
-} UARTStatusTx;
-
+typedef enum protocol
+{
+   default_protocol,
+   usb_protocol,
+   uart_protocol,
+} protocol;
 // ----- Messages -----
 
 typedef struct cable_check_msg_t
@@ -89,7 +76,6 @@ typedef struct id_enum_msg_t
 {
    msg_header     header;
    uint8_t        id;
-   uint8_t        enable_master;
 } id_enum_msg_t;
 
 typedef struct id_report_msg_t
@@ -125,13 +111,21 @@ typedef struct remote_capability_msg_t
    uint8_t        args[];
 } remote_capability_msg_t;
 
+typedef struct enable_master_msg_t
+{
+   msg_header     header;
+   uint8_t        id;
+   protocol       output_protocol;
+} enable_master_msg_t;
+
 cable_check_msg_t       cable_check_msg         = { {CmdCommand_SYN, 0x01, sizeof(cable_check_msg_t), CmdCableCheck}, UARTConnectCableCheckLength_define, {0xD2}};
 id_request_msg_t        id_request_msg          = { {CmdCommand_SYN, 0x01, sizeof(id_request_msg_t), CmdIdRequest}, 0x00 };
-id_enum_msg_t           id_enum_msg             = { {CmdCommand_SYN, 0x01, sizeof(id_enum_msg_t), CmdIdEnumeration}, 0xFF, 0x00};
+id_enum_msg_t           id_enum_msg             = { {CmdCommand_SYN, 0x01, sizeof(id_enum_msg_t), CmdIdEnumeration}, 0xFF};
 id_report_msg_t         id_report_msg           = { {CmdCommand_SYN, 0x01, sizeof(id_report_msg_t), CmdIdReport}, 0xFF};
 scan_code_msg_t         scan_code_msg           = { {CmdCommand_SYN, 0x01, sizeof(scan_code_msg_t), CmdScanCode}, 0xFF, 0};
 animation_msg_t         animation_msg           = { {CmdCommand_SYN, 0x01, sizeof(animation_msg_t), CmdAnimation}, 0xFF, 0};
 remote_capability_msg_t remote_capability_msg   = { {CmdCommand_SYN, 0x01, sizeof(remote_capability_msg_t), CmdRemoteCapability}, 0xFF, 0, 0, 0, 0};
+enable_master_msg_t     enable_master_msg       = { {CmdCommand_SYN, 0x01, sizeof(enable_master_msg_t), CmdEnableMaster}, 0xFF, default_protocol};
 
 // ----- Variables -----
 
@@ -200,10 +194,9 @@ void Connect_send_IdRequest()
 }
 
 // id is the value the next slave should enumerate as
-void Connect_send_IdEnumeration( uint8_t id, uint8_t enable_master )
+void Connect_send_IdEnumeration( uint8_t id )
 {
    id_enum_msg.id = id;
-   id_enum_msg.enable_master = enable_master;
    upipe_send_msg(&slave_pipe, &id_enum_msg.header);
 }
 
@@ -272,6 +265,13 @@ void Connect_send_RemoteCapability( uint8_t id, uint8_t capabilityIndex, uint8_t
       // Send message
       upipe_send_variable_msg(&master_pipe, &remote_capability_msg.header, args, numArgs);
    }
+}
+
+void Connect_send_EnableMaster ( uint8_t id, protocol p )
+{
+   enable_master_msg.id = id;
+   enable_master_msg.output_protocol = p;
+   upipe_send_msg(&slave_pipe, &enable_master_msg.header);
 }
 
 void Connect_send_Idle( uint8_t num )
@@ -374,7 +374,7 @@ uint8_t Connect_receive_slave_IdRequest( const msg_header *hdr )
    {
       // The first device is always id 1
       // Id 0 is reserved for the master
-      Connect_send_IdEnumeration( 1, 0 );
+      Connect_send_IdEnumeration( 1 );
    }
    // Propagate IdRequest
    else
@@ -408,8 +408,6 @@ uint8_t Connect_receive_master_IdEnumeration( const msg_header *hdr )
    // Set the device id
    Connect_id = msg->id;
 
-   Connect_set_master( msg->enable_master, msg->id ); 
-
    // Send reponse back to master
    Connect_send_IdReport( msg->id );
 
@@ -424,7 +422,7 @@ uint8_t Connect_receive_master_IdEnumeration( const msg_header *hdr )
    // Propogate next Id if the connection is ok
    if ( Connect_cableOkSlave )
    {
-      Connect_send_IdEnumeration( msg->id + 1, 0 );
+      Connect_send_IdEnumeration( msg->id + 1 );
    }
 
    return SUCCESS;
@@ -552,6 +550,36 @@ uint8_t Connect_receive_master_RemoteCapability( const msg_header * hdr )
    return Connect_receive_RemoteCapability(hdr, &slave_pipe);
 }
 
+uint8_t Connect_receive_master_EnableMaster( const msg_header *hdr )
+{
+   dbug_print("EnableMaster");
+
+   error_code_t err = SUCCESS;
+   const enable_master_msg_t *msg = (const enable_master_msg_t*)hdr;
+   // if message is for this node, enable master capability
+   if (msg->id == Connect_id)
+   {
+      Connect_set_master( 1, msg->id );
+      // notify output module of any protocol change
+      
+      // send ack upstream
+   }
+   // else forward to next node in the chain
+   else
+      err = upipe_send_msg(&slave_pipe, hdr);
+
+   return err;
+}
+
+uint8_t Connect_receive_slave_EnableMaster( const msg_header *hdr )
+{
+   dbug_print("EnableMaster");
+
+   // forward ack upstream
+   return upipe_send_msg(&master_pipe, hdr);
+}
+
+
 // Baud Rate
 // NOTE: If finer baud adjustment is needed see UARTx_C4 -> BRFA in the datasheet
 uint16_t Connect_baud = UARTConnectBaud_define; // Max setting of 8191
@@ -606,6 +634,7 @@ void Connect_setup( uint8_t master )
    upipe_register_callback(&slave_pipe, CmdScanCode,           &Connect_receive_slave_ScanCode);
    upipe_register_callback(&slave_pipe, CmdAnimation,          &Connect_receive_Animation);
    upipe_register_callback(&slave_pipe, CmdRemoteCapability,   &Connect_receive_slave_RemoteCapability);
+   upipe_register_callback(&slave_pipe, CmdEnableMaster,       &Connect_receive_slave_EnableMaster);
 
    // register master pipe callbacks
    upipe_register_callback(&master_pipe, CmdCableCheck,        &Connect_receive_master_CableCheck);
@@ -615,6 +644,7 @@ void Connect_setup( uint8_t master )
    upipe_register_callback(&master_pipe, CmdScanCode,          &Connect_receive_slave_ScanCode);
    upipe_register_callback(&master_pipe, CmdAnimation,         &Connect_receive_Animation);
    upipe_register_callback(&master_pipe, CmdRemoteCapability,  &Connect_receive_master_RemoteCapability);
+   upipe_register_callback(&master_pipe, CmdEnableMaster,      &Connect_receive_master_EnableMaster);
 
    // UARTs are now ready to go
    uarts_configured = 1;
@@ -702,7 +732,7 @@ void cliFunc_connectCmd( char* args )
       break;
 
    case IdEnumeration:
-      Connect_send_IdEnumeration( 5, 0 );
+      Connect_send_IdEnumeration( 5 );
       break;
 
    case IdReport:

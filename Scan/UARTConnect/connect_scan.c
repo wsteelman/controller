@@ -25,12 +25,8 @@
 #include <led.h>
 #include <print.h>
 #include <macro.h>
-
-// Local Includes
-#include "connect_scan.h"
-#include "uart.h"
-#include "ring_buffer.h"
-#include "uart_message_pipe.h"
+#include <connect_scan.h>
+#include <uart_message_pipe.h>
 
 // ----- Defines -----
 
@@ -163,8 +159,8 @@ uint8_t Connect_override = 0;   // Prevents master from automatically being set
 volatile uint8_t uarts_configured = 0;
 
 // -- UART Variables --
-uart_message_pipe_t slave_pipe;
-uart_message_pipe_t master_pipe;
+uart_message_pipe_t *slave_pipe;
+uart_message_pipe_t *master_pipe;
 
 void Connect_set_master( uint8_t master, uint8_t id )
 {
@@ -184,27 +180,27 @@ void Connect_send_CableCheck()
    {
       cable_check_msg.pattern[c] = value;
    }
-   upipe_send_msg(&master_pipe, &cable_check_msg.header);
-   upipe_send_msg(&slave_pipe, &cable_check_msg.header);
+   upipe_send_msg(master_pipe, &cable_check_msg.header);
+   upipe_send_msg(slave_pipe, &cable_check_msg.header);
 }
 
 void Connect_send_IdRequest()
 {
-   upipe_send_msg(&master_pipe, &id_request_msg.header);
+   upipe_send_msg(master_pipe, &id_request_msg.header);
 }
 
 // id is the value the next slave should enumerate as
 void Connect_send_IdEnumeration( uint8_t id )
 {
    id_enum_msg.id = id;
-   upipe_send_msg(&slave_pipe, &id_enum_msg.header);
+   upipe_send_msg(slave_pipe, &id_enum_msg.header);
 }
 
 // id is the currently assigned id to the slave
 void Connect_send_IdReport( uint8_t id )
 {
    id_report_msg.id = id;
-   upipe_send_msg(&master_pipe, &id_report_msg.header);
+   upipe_send_msg(master_pipe, &id_report_msg.header);
 }
 
 // id is the currently assigned id to the slave
@@ -220,7 +216,7 @@ void Connect_send_ScanCode( uint8_t id, TriggerGuide *scanCodeStateList, uint8_t
    uint8_t code_bytes = numScanCodes * TriggerGuideSize;
 
    // Send message
-   upipe_send_variable_msg(&master_pipe, &scan_code_msg.header, (uint8_t*)scanCodeStateList, code_bytes);
+   upipe_send_variable_msg(master_pipe, &scan_code_msg.header, (uint8_t*)scanCodeStateList, code_bytes);
 }
 
 // id is the currently assigned id to the slave
@@ -233,7 +229,7 @@ void Connect_send_Animation( uint8_t id, uint8_t *paramList, uint8_t numParams )
    animation_msg.param_count = numParams;
 
    // Send message
-   upipe_send_variable_msg(&slave_pipe, &animation_msg.header, paramList, numParams);
+   upipe_send_variable_msg(slave_pipe, &animation_msg.header, paramList, numParams);
 }
 
 // Send a remote capability command using capability index
@@ -256,14 +252,14 @@ void Connect_send_RemoteCapability( uint8_t id, uint8_t capabilityIndex, uint8_t
    if ( id > Connect_id )
    {
       // Send message
-      upipe_send_variable_msg(&slave_pipe, &remote_capability_msg.header, args, numArgs);
+      upipe_send_variable_msg(slave_pipe, &remote_capability_msg.header, args, numArgs);
    }
 
    // Send towards master node
    if ( id < Connect_id || id == 255 )
    {
       // Send message
-      upipe_send_variable_msg(&master_pipe, &remote_capability_msg.header, args, numArgs);
+      upipe_send_variable_msg(master_pipe, &remote_capability_msg.header, args, numArgs);
    }
 }
 
@@ -271,13 +267,13 @@ void Connect_send_EnableMaster ( uint8_t id, protocol p )
 {
    enable_master_msg.id = id;
    enable_master_msg.output_protocol = p;
-   upipe_send_msg(&slave_pipe, &enable_master_msg.header);
+   upipe_send_msg(slave_pipe, &enable_master_msg.header);
 }
 
 void Connect_send_Idle( uint8_t num )
 {
-   upipe_send_idle(&master_pipe, num);
-   upipe_send_idle(&slave_pipe, num);
+   upipe_send_idle(master_pipe, num);
+   upipe_send_idle(slave_pipe, num);
 }
 
 // -- Connect receive functions --
@@ -506,7 +502,7 @@ uint8_t Connect_receive_slave_ScanCode( const msg_header *hdr )
    }
    // Propagate ScanCode packet
    else
-      upipe_send_msg(&master_pipe, hdr);
+      upipe_send_msg(master_pipe, hdr);
 
    return SUCCESS;
 }
@@ -543,11 +539,11 @@ uint8_t Connect_receive_RemoteCapability( const msg_header * hdr, uart_message_p
 
 uint8_t Connect_receive_slave_RemoteCapability( const msg_header * hdr )
 {
-   return Connect_receive_RemoteCapability(hdr, &master_pipe);
+   return Connect_receive_RemoteCapability(hdr, master_pipe);
 }
 uint8_t Connect_receive_master_RemoteCapability( const msg_header * hdr )
 {
-   return Connect_receive_RemoteCapability(hdr, &slave_pipe);
+   return Connect_receive_RemoteCapability(hdr, slave_pipe);
 }
 
 uint8_t Connect_receive_master_EnableMaster( const msg_header *hdr )
@@ -561,12 +557,12 @@ uint8_t Connect_receive_master_EnableMaster( const msg_header *hdr )
    {
       Connect_set_master( 1, msg->id );
       // notify output module of any protocol change
-      
+
       // send ack upstream
    }
    // else forward to next node in the chain
    else
-      err = upipe_send_msg(&slave_pipe, hdr);
+      err = upipe_send_msg(slave_pipe, hdr);
 
    return err;
 }
@@ -576,7 +572,7 @@ uint8_t Connect_receive_slave_EnableMaster( const msg_header *hdr )
    dbug_print("EnableMaster");
 
    // forward ack upstream
-   return upipe_send_msg(&master_pipe, hdr);
+   return upipe_send_msg(master_pipe, hdr);
 }
 
 
@@ -590,8 +586,8 @@ uint16_t Connect_baudFine = UARTConnectBaudFine_define;
 // Resets the state of the UART buffers and state variables
 void Connect_reset()
 {
-   upipe_reset(&slave_pipe, UART_Buffer_Size);
-   upipe_reset(&master_pipe, UART_Buffer_Size);
+   upipe_reset(slave_pipe, UART_Buffer_Size);
+   upipe_reset(master_pipe, UART_Buffer_Size);
 }
 
 // Setup connection to other side
@@ -627,24 +623,24 @@ void Connect_setup( uint8_t master )
    }
 
    // register slave pipe callbacks
-   upipe_register_callback(&slave_pipe, CmdCableCheck,         &Connect_receive_slave_CableCheck);
-   upipe_register_callback(&slave_pipe, CmdIdRequest,          &Connect_receive_slave_IdRequest);
-   upipe_register_callback(&slave_pipe, CmdIdEnumeration,      &Connect_receive_slave_IdEnumeration);
-   upipe_register_callback(&slave_pipe, CmdIdReport,           &Connect_receive_IdReport);
-   upipe_register_callback(&slave_pipe, CmdScanCode,           &Connect_receive_slave_ScanCode);
-   upipe_register_callback(&slave_pipe, CmdAnimation,          &Connect_receive_Animation);
-   upipe_register_callback(&slave_pipe, CmdRemoteCapability,   &Connect_receive_slave_RemoteCapability);
-   upipe_register_callback(&slave_pipe, CmdEnableMaster,       &Connect_receive_slave_EnableMaster);
+   upipe_register_callback(slave_pipe, CmdCableCheck,         &Connect_receive_slave_CableCheck);
+   upipe_register_callback(slave_pipe, CmdIdRequest,          &Connect_receive_slave_IdRequest);
+   upipe_register_callback(slave_pipe, CmdIdEnumeration,      &Connect_receive_slave_IdEnumeration);
+   upipe_register_callback(slave_pipe, CmdIdReport,           &Connect_receive_IdReport);
+   upipe_register_callback(slave_pipe, CmdScanCode,           &Connect_receive_slave_ScanCode);
+   upipe_register_callback(slave_pipe, CmdAnimation,          &Connect_receive_Animation);
+   upipe_register_callback(slave_pipe, CmdRemoteCapability,   &Connect_receive_slave_RemoteCapability);
+   upipe_register_callback(slave_pipe, CmdEnableMaster,       &Connect_receive_slave_EnableMaster);
 
    // register master pipe callbacks
-   upipe_register_callback(&master_pipe, CmdCableCheck,        &Connect_receive_master_CableCheck);
-   upipe_register_callback(&master_pipe, CmdIdRequest,         &Connect_receive_master_IdRequest);
-   upipe_register_callback(&master_pipe, CmdIdEnumeration,     &Connect_receive_master_IdEnumeration);
-   upipe_register_callback(&master_pipe, CmdIdReport,          &Connect_receive_IdReport);
-   upipe_register_callback(&master_pipe, CmdScanCode,          &Connect_receive_slave_ScanCode);
-   upipe_register_callback(&master_pipe, CmdAnimation,         &Connect_receive_Animation);
-   upipe_register_callback(&master_pipe, CmdRemoteCapability,  &Connect_receive_master_RemoteCapability);
-   upipe_register_callback(&master_pipe, CmdEnableMaster,      &Connect_receive_master_EnableMaster);
+   upipe_register_callback(master_pipe, CmdCableCheck,        &Connect_receive_master_CableCheck);
+   upipe_register_callback(master_pipe, CmdIdRequest,         &Connect_receive_master_IdRequest);
+   upipe_register_callback(master_pipe, CmdIdEnumeration,     &Connect_receive_master_IdEnumeration);
+   upipe_register_callback(master_pipe, CmdIdReport,          &Connect_receive_IdReport);
+   upipe_register_callback(master_pipe, CmdScanCode,          &Connect_receive_slave_ScanCode);
+   upipe_register_callback(master_pipe, CmdAnimation,         &Connect_receive_Animation);
+   upipe_register_callback(master_pipe, CmdRemoteCapability,  &Connect_receive_master_RemoteCapability);
+   upipe_register_callback(master_pipe, CmdEnableMaster,      &Connect_receive_master_EnableMaster);
 
    // UARTs are now ready to go
    uarts_configured = 1;
@@ -662,9 +658,9 @@ void Connect_scan()
 {
    // Check if initially configured as a slave and usb comes up
    // Then reconfigure as a master
-   if ( !Connect_master && Output_Available && !Connect_override )
+   if ( !Connect_master && Output_available() && !Connect_override )
    {
-      Connect_set_master( Output_Available, 0x00 );
+      Connect_set_master( Output_available(), 0x00 );
       Connect_reset();
    }
 
@@ -695,8 +691,8 @@ void Connect_scan()
    {
       // Check if Tx Buffers are empty and the Tx Ring buffers have data to send
       // This happens if there was previously nothing to send
-      upipe_process(&slave_pipe);
-      upipe_process(&master_pipe);
+      upipe_process(slave_pipe);
+      upipe_process(master_pipe);
    }
 }
 

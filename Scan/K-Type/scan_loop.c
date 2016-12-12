@@ -54,7 +54,7 @@ uint16_t Scan_scanCount = 0;
 inline void Scan_setup()
 {
 	// Setup UART Connect, if Output_Available, this is the master node
-	Connect_setup( Output_Available );
+	Connect_setup( Output_available() );
 
 	// Setup GPIO pins for matrix scanning
 	Matrix_setup();

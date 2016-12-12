@@ -2,6 +2,7 @@
 
 #include "error.h"
 #include "msg.h"
+#include "uart.h"
 
 #define UART_Buffer_Size UARTConnectBufSize_define
 
@@ -53,7 +54,7 @@ void upipe_enable_debug(uint8_t debug);
 
 error_code_t upipe_reset(uart_message_pipe_t *pipe, uint8_t capcity);
 
-error_code_t upipe_init(uart_message_pipe_t *pipe, uint8_t uart_id,
+error_code_t upipe_init(uart_message_pipe_t **return_pipe, uint8_t uart_id,
                         uint8_t baud, uint8_t buffer_size);
 
 error_code_t upipe_send_msg(uart_message_pipe_t *pipe, const msg_header *hdr);

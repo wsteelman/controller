@@ -24,6 +24,7 @@ elseif ( ${COMPILER_FAMILY} MATCHES "arm" )
 
 	set ( Module_SRCS
 		output_com.c
+		usb_output_com.c
 		arm/usb_desc.c
 		arm/usb_dev.c
 		arm/usb_joystick.c

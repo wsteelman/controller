@@ -37,7 +37,7 @@
 #include <inttypes.h>
 
 // Local Includes
-#include <output_com.h>
+#include <usb_output_com.h>
 
 
 

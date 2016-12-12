@@ -708,7 +708,7 @@ inline void Macro_process()
 #endif
 
 	// Only do one round of macro processing between Output Module timer sends
-	if ( USBKeys_Sent != 0 )
+	if ( Output_keys_sent() != 0 )
 		return;
 
 #if defined(ConnectEnabled_define) || defined(PressReleaseCache_define)
@@ -775,8 +775,7 @@ inline void Macro_process()
 	// If Macro debug mode is set, clear the USB Buffer
 	if ( macroDebugMode )
 	{
-		USBKeys_Modifiers = 0;
-		USBKeys_Sent = 0;
+      Output_reset_buffers();
 	}
 }
 

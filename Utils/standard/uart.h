@@ -106,6 +106,8 @@ typedef const void *uart_handle_t;
 
 uart_handle_t uart_config (uint8_t uart_id, uint16_t baud);
 
+error_code_t uart_set_baud(uart_handle_t handle, uint16_t baud);
+
 error_code_t uart_rx_dma_setup(uint8_t chnl, uart_handle_t handle, uint32_t *dst, uint32_t buf_size);
 
 uint8_t uart_rx_dma_buffer_position(uart_handle_t handle);

@@ -30,6 +30,7 @@
 
 // -- Control Variables --
 uint8_t upipe_debug = 0;      // Set 1 for debug
+uart_message_pipe_t pipes[2] = {0};
 
 // ----- Internal Functions -----
 
@@ -238,8 +239,12 @@ error_code_t upipe_reset(uart_message_pipe_t *pipe, uint8_t capacity)
    return SUCCESS;
 }
 
-error_code_t upipe_init(uart_message_pipe_t *pipe, uint8_t uart_id, uint8_t baud, uint8_t buffer_size)
+error_code_t upipe_init(uart_message_pipe_t **return_pipe, uint8_t uart_id, uint8_t baud, uint8_t buffer_size)
 {
+   uart_message_pipe_t *pipe = &pipes[uart_id];
+   if (pipe->configured)
+      return uart_set_baud(pipe->uart_handle, baud);
+
    memset(pipe, 0x00, sizeof(uart_message_pipe_t));
    error_code_t err = SUCCESS;
    pipe->configured = 0;
@@ -264,7 +269,7 @@ error_code_t upipe_init(uart_message_pipe_t *pipe, uint8_t uart_id, uint8_t baud
    uart_start(pipe->uart_handle);
 
    pipe->configured = 1;
-
+   *return_pipe = pipe;
    return err;
 }
 

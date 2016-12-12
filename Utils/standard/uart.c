@@ -59,6 +59,19 @@ uart_handle_t uart_config (uint8_t uart_id, uint16_t baud)
    return (void*) handle;
 }
 
+error_code_t uart_set_baud(uart_handle_t handle, uint16_t baud)
+{
+   uart_handle *h = (uart_handle*)handle;
+   const uart_addrs *inf = &uarts[h->id];
+
+   // baud rate
+   *(inf->bdh) = (uint8_t)(baud >> 8);
+   *(inf->bdl) = (uint8_t)baud;
+   *(inf->c4) = 0;
+
+   return SUCCESS;
+}
+
 error_code_t uart_rx_dma_setup(uint8_t chnl, uart_handle_t handle, uint32_t *dst, uint32_t buf_size)
 {
    uart_handle *h = (uart_handle*)handle;

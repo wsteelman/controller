@@ -19,8 +19,7 @@
 #include "error.h"
 #include "dma.h"
 
-#define UART_MAX_INDEX 3
-//#define uart_buffer_size UARTConnectBufSize_define
+#define UART_Count 2
 
 typedef struct uart_addrs
 {

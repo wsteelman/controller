@@ -33,6 +33,7 @@ set( MacroModulePath   "Macro/${MacroModule}"  )
 set( OutputModulePath "Output/${OutputModule}" )
 set( DebugModulePath   "Debug/${DebugModule}"  )
 set( UtilsModulePath   "Utils/${UtilsModule}"  )
+set( InterconnectModulePath   "Interconnect/${InterconnectModule}"  )
 
 #| Top-level directory adjustment
 set( HEAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}" )
@@ -143,6 +144,7 @@ AddModule ( Macro  ${MacroModule}  1 )
 AddModule ( Output ${OutputModule} 1 )
 AddModule ( Debug  ${DebugModule}  1 )
 AddModule ( Utils  ${UtilsModule}  1 )
+AddModule ( Interconnect  ${InterconnectModule}  1 )
 
 
 
@@ -171,6 +173,7 @@ set ( SRCS
 	${Output_SRCS}
 	${Debug_SRCS}
    ${Utils_SRCS}
+   ${Interconnect_SRCS}
 )
 
 #| Directories to include by default

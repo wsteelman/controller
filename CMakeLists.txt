@@ -87,6 +87,11 @@ set(  UtilsModule "standard"
 	CACHE STRING "Utils Module"
 )
 
+##| Interconnect source to use
+set(  InterconnectModule "UART"
+	CACHE STRING "Interconnect Module"
+)
+
 ###
 # Keymap Configuration (do not include the .kll extension)
 #

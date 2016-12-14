@@ -5,6 +5,7 @@
 #include "uart.h"
 
 #define UART_Buffer_Size UARTConnectBufSize_define
+#define MAX_Subscribers 8
 
 // UART Rx/Tx Status
 typedef enum UARTStatus {
@@ -34,7 +35,11 @@ typedef struct uart_status_tx_t {
 } uart_status_tx_t;
 
 typedef uint8_t (*rx_callback_t)(const msg_header*);
-typedef uint8_t (*rx_byte_callback_t)(uint8_t byte, uint8_t uart_num, uint8_t cmd, uint16_t *bytes);
+typedef struct rx_callback_list_t
+{
+   rx_callback_t  callbacks[MAX_Subscribers];
+   uint8_t        count;
+} rx_callback_list_t;
 
 typedef struct uart_message_pipe_t
 {
@@ -47,7 +52,7 @@ typedef struct uart_message_pipe_t
    uart_dma_buf_t       rx_buf;
    uint8_t              rx_msg[256];
    uint8_t              rx_msg_index;
-   rx_callback_t        rx_callbacks[CmdCommand_TOP];
+   rx_callback_list_t   rx_callbacks[CmdCommand_TOP];
 } uart_message_pipe_t;
 
 void upipe_enable_debug(uint8_t debug);

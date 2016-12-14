@@ -30,7 +30,7 @@
 
 // -- Control Variables --
 uint8_t upipe_debug = 0;      // Set 1 for debug
-uart_message_pipe_t pipes[2] = {0};
+uart_message_pipe_t pipes[UART_Count] = {0};
 
 // ----- Internal Functions -----
 
@@ -151,8 +151,11 @@ void upipe_rx_process(uart_message_pipe_t *pipe)
          if (pipe->rx_msg_index >= hdr->bytes)
          {
             /* Call specific UARTConnect command receive function */
-            rx_callback_t func = pipe->rx_callbacks[hdr->cmd];
-            func(hdr);
+            rx_callback_list_t *cb_list = &pipe->rx_callbacks[hdr->cmd];
+            for (uint8_t i = 0; i < cb_list->count; ++i)
+            {
+               cb_list->callbacks[i](hdr);
+            }
             pipe->rx_status = UARTStatus_Wait;
             pipe->rx_msg_index = 0;
          }
@@ -293,11 +296,13 @@ error_code_t upipe_send_variable_msg(uart_message_pipe_t *pipe, msg_header *hdr,
    err = upipe_send_bytes(pipe, (uint8_t*)hdr, hdr_size);
    if (err != SUCCESS)
    {
+      // reset bytes in header so the above hdr->bytes += works 
       hdr->bytes = hdr_size;
       uart_unlock_tx(&pipe->tx_status);
       return err;
    }
    err = upipe_send_bytes(pipe, var, var_size);
+   // reset bytes in header so the above hdr->bytes += works 
    hdr->bytes = hdr_size;
    // unlock on success or failure
    uart_unlock_tx(&pipe->tx_status);
@@ -321,7 +326,11 @@ error_code_t upipe_send_idle(uart_message_pipe_t *pipe, uint8_t len)
 
 void upipe_register_callback(uart_message_pipe_t *pipe, command cmd, rx_callback_t func)
 {
-   pipe->rx_callbacks[cmd] = func;
+   if (pipe->rx_callbacks[cmd].count >= MAX_Subscribers)
+      return;
+
+   pipe->rx_callbacks[cmd].callbacks[pipe->rx_callbacks[cmd].count] = func;
+   pipe->rx_callbacks[cmd].count++;
 }
 
 error_code_t upipe_process(uart_message_pipe_t *pipe)

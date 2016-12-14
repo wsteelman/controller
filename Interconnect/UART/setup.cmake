@@ -11,8 +11,8 @@
 # Module C files
 #
 set ( Module_SRCS
-   uart.c
-   dma.c
+   uart_message_pipe.c
+   interconnect.c
 )
 
 

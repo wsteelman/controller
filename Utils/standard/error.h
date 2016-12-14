@@ -25,5 +25,7 @@ typedef enum
    DMA_CHANNEL_IN_USE      = 0x04,
    RING_BUFFER_FULL        = 0x05,
    RING_BUFFER_EMPTY       = 0x06,
+   NOT_READY               = 0x07,
+   LINK_DOWN               = 0x08,
 } error_code_t;
 

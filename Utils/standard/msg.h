@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <kll.h>
+
 typedef enum command {
    CmdCableCheck,       // Comm check
 
@@ -43,4 +45,68 @@ typedef struct msg_header
    command cmd;
 } msg_header;
 
+typedef struct cable_check_msg_t
+{
+   msg_header     header;
+   uint8_t        len;
+   uint8_t        pattern[UARTConnectCableCheckLength_define];
+} cable_check_msg_t;
+typedef struct id_request_msg_t
+{
+   msg_header     header;
+   uint8_t        payload;
+} id_request_msg_t;
+
+typedef struct id_enum_msg_t
+{
+   msg_header     header;
+   uint8_t        id;
+} id_enum_msg_t;
+
+typedef struct id_report_msg_t
+{
+   msg_header     header;
+   uint8_t        id;
+} id_report_msg_t;
+
+typedef struct scan_code_msg_t
+{
+   msg_header     header;
+   uint8_t        id;
+   uint8_t        count;
+   TriggerGuide   codes[];
+} scan_code_msg_t;
+
+typedef struct animation_msg_t
+{
+   msg_header     header;
+   uint8_t        id;
+   uint8_t        param_count;
+   uint8_t        params[];
+} animation_msg_t;
+
+typedef struct remote_capability_msg_t
+{
+   msg_header     header;
+   uint8_t        id;
+   uint8_t        capability_index;
+   uint8_t        state;
+   uint8_t        state_type;
+   uint8_t        num_args;
+   uint8_t        args[];
+} remote_capability_msg_t;
+
+typedef enum protocol
+{
+   default_protocol,
+   usb_protocol,
+   uart_protocol,
+} protocol;
+
+typedef struct enable_master_msg_t
+{
+   msg_header     header;
+   uint8_t        id;
+   protocol       output_protocol;
+} enable_master_msg_t;
 

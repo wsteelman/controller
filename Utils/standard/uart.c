@@ -17,14 +17,14 @@
 #include "uart.h"
 
 #if defined (_mk20dx256vlh7_)
-   uart_addrs uarts[2] = {uart0, uart1};
+   uart_addrs uarts[UART_Count] = {uart0, uart1};
 #endif
 
-uart_handle uart_handles[UART_MAX_INDEX+1] = {0};
+uart_handle uart_handles[UART_Count] = {0};
 
 uart_handle_t uart_config (uint8_t uart_id, uint16_t baud)
 {
-   if (uart_id > UART_MAX_INDEX)
+   if (uart_id >= UART_Count)
       return NULL;
 
    const uart_addrs *inf = &uarts[uart_id];

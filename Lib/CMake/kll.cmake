@@ -61,7 +61,7 @@ endif () # kll/kll.py exists
 #| KLL_DEPENDS is used to build a dependency tree for kll.py, this way when files are changed, kll.py gets re-run
 
 #| Add each of the detected capabilities.kll
-foreach ( filename ${ScanModule_KLL} ${MacroModule_KLL} ${OutputModule_KLL} ${DebugModule_KLL} )
+foreach ( filename ${ScanModule_KLL} ${MacroModule_KLL} ${OutputModule_KLL} ${DebugModule_KLL} ${InterconnectModule_KLL})
 	set ( BaseMap_Args ${BaseMap_Args} ${filename} )
 	set ( KLL_DEPENDS ${KLL_DEPENDS} ${filename} )
 endforeach ()

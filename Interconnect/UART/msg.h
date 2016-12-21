@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <kll.h>
+#include <kll_defs.h>
 
 typedef enum command {
    CmdCableCheck,       // Comm check
@@ -96,17 +96,17 @@ typedef struct remote_capability_msg_t
    uint8_t        args[];
 } remote_capability_msg_t;
 
-typedef enum protocol
+typedef enum protocol_t
 {
-   default_protocol,
    usb_protocol,
    uart_protocol,
-} protocol;
+   protocol_count,
+} protocol_t;
 
 typedef struct enable_master_msg_t
 {
    msg_header     header;
    uint8_t        id;
-   protocol       output_protocol;
+   protocol_t     output_protocol;
 } enable_master_msg_t;
 

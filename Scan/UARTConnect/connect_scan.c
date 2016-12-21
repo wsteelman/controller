@@ -26,7 +26,6 @@
 #include <print.h>
 #include <macro.h>
 #include <connect_scan.h>
-#include <uart_message_pipe.h>
 #include <interconnect.h>
 
 // ----- Function Declarations -----
@@ -41,7 +40,7 @@ void cliFunc_connectLst ( char *args );
 scan_code_msg_t         scan_code_msg           = { {CmdCommand_SYN, 0x01, sizeof(scan_code_msg_t), CmdScanCode}, 0xFF, 0};
 animation_msg_t         animation_msg           = { {CmdCommand_SYN, 0x01, sizeof(animation_msg_t), CmdAnimation}, 0xFF, 0};
 remote_capability_msg_t remote_capability_msg   = { {CmdCommand_SYN, 0x01, sizeof(remote_capability_msg_t), CmdRemoteCapability}, 0xFF, 0, 0, 0, 0};
-enable_master_msg_t     enable_master_msg       = { {CmdCommand_SYN, 0x01, sizeof(enable_master_msg_t), CmdEnableMaster}, 0xFF, default_protocol};
+enable_master_msg_t     enable_master_msg       = { {CmdCommand_SYN, 0x01, sizeof(enable_master_msg_t), CmdEnableMaster}, 0xFF, usb_protocol};
 
 // ----- Variables -----
 
@@ -60,6 +59,7 @@ CLIDict_Def( uartConnectCLIDict, "UARTConnect Module Commands" ) = {
 // -- Connect Device Id Variables --
 uint8_t Connect_id = 255; // Invalid, unset
 uint8_t Connect_master = 0;
+uint8_t Connect_master_override = 0;
 
 // -- Control Variables --
 uint8_t Connect_debug = 0;      // Set 1 for debug
@@ -127,7 +127,7 @@ void Connect_send_RemoteCapability( uint8_t id, uint8_t capabilityIndex, uint8_t
    }
 }
 
-void Connect_send_EnableMaster ( uint8_t id, protocol p )
+void Connect_send_EnableMaster ( uint8_t id, protocol_t p )
 {
    enable_master_msg.id = id;
    enable_master_msg.output_protocol = p;
@@ -237,18 +237,14 @@ uint8_t Connect_receive_master_EnableMaster( const msg_header *hdr )
    dbug_print("EnableMaster");
 
    error_code_t err = SUCCESS;
-//   const enable_master_msg_t *msg = (const enable_master_msg_t*)hdr;
-//   // if message is for this node, enable master capability
-//   if (msg->id == Connect_id)
-//   {
-//      Connect_set_master( 1, msg->id );
-//
-//      // send ack upstream
-//   }
-//   // else forward to next node in the chain
-//   else
-//      err = Iconnect_send_msg(Iconnect_down, hdr);
-//
+   const enable_master_msg_t *msg = (const enable_master_msg_t*)hdr;
+   // if message is for this node, enable master capability
+   if (msg->id == Connect_id)
+      Connect_master_override = 1;
+   // else forward to next node in the chain
+   else
+      err = Iconnect_send_msg(Iconnect_down, hdr);
+
    return err;
 }
 
@@ -257,7 +253,8 @@ uint8_t Connect_receive_slave_EnableMaster( const msg_header *hdr )
    dbug_print("EnableMaster");
 
    // forward ack upstream
-   return Iconnect_send_msg(Iconnect_up, hdr);
+   //return Iconnect_send_msg(Iconnect_up, hdr);
+   return SUCCESS;
 }
 
 // ----- Functions -----
@@ -291,7 +288,7 @@ void Connect_setup( uint8_t master )
 // - SyncEvent is also blocking until sent
 void Connect_scan()
 {
-   Connect_master = connect_node.master && Output_available();
+   Connect_master = (connect_node.master || Connect_master_override) && Output_available();
    Connect_id = connect_node.id;
 }
 
@@ -353,6 +350,7 @@ void cliFunc_connectDbg( char* args )
 
 void cliFunc_connectLst( char* args )
 {
+   // TODO: need to fix command indicies
    const char *Command_strs[] = {
       "ScanCode",
       "Animation",

@@ -26,44 +26,37 @@
 
 // Project Includes
 #include <cli.h>
-#include <led.h>
 #include <print.h>
-#include <scan_loop.h>
-#include <connect_scan.h>
-#include <uart_message_pipe.h>
-#include <msg.h>
+#include <interconnect.h>
 
 // KLL
 #include <kll_defs.h>
 
 // Local Includes
 #include "uart_output_com.h"
-#define UART_Buffer_Size UARTConnectBufSize_define
 
-remote_capability_msg_t remote_capability_msg   = { {CmdCommand_SYN, 0x01, sizeof(remote_capability_msg_t), CmdRemoteCapability}, 0xFF, 0, 0, 0, 0};
+remote_capability_msg_t output_remote_capability_msg   = { {CmdCommand_SYN, 0x01, sizeof(remote_capability_msg_t), CmdRemoteCapability}, 0xFF, 0, 0, 0, 0};
 
 // ----- Variables -----
-
-uint16_t Output_baud = UARTConnectBaud_define; // Max setting of 8191
-uint8_t uart_output_available = 0;
-uart_message_pipe_t *pipe = NULL;
+uint8_t keys_sent = 0;
 
 // ----- Capabilities -----
 
-void send_remote_capability( uint8_t index, uint8_t state, uint8_t stateType, uint8_t args )
+void send_remote_capability( uint8_t index, uint8_t state, uint8_t stateType, uint8_t *args )
 {
    // Prepare header
-   remote_capability_msg.id = 1;  // TODO: don't hardcode this
-   remote_capability_msg.capability_index = index;
-   remote_capability_msg.state = state;
-   remote_capability_msg.state_type = stateType;
+   output_remote_capability_msg.id = 1;  // TODO: don't hardcode this
+   output_remote_capability_msg.capability_index = index;
+   output_remote_capability_msg.state = state;
+   output_remote_capability_msg.state_type = stateType;
 
    // get argument count
+   extern const Capability CapabilitiesList[]; // See generatedKeymap.h
    uint8_t num_args = CapabilitiesList[ index ].argCount;
-   remote_capability_msg.num_args = num_args;
+   output_remote_capability_msg.num_args = num_args;
 
    // send message
-   upipe_send_variable_msg(pipe, &remote_capability_msg.header, args, num_args);
+   Iconnect_send_variable_msg(Iconnect_up, &output_remote_capability_msg.header, args, num_args);
 
 } 
 
@@ -126,6 +119,7 @@ void uart_Output_usbCodeSend_capability( uint8_t state, uint8_t stateType, uint8
 {
 #if enableKeyboard_define == 1
    send_remote_capability(Output_usbCodeSend_capability_index, state, stateType, args);
+   keys_sent++;
 #endif
 }
 
@@ -147,44 +141,22 @@ void uart_Output_usbMouse_capability( uint8_t state, uint8_t stateType, uint8_t 
 }
 #endif
 
-// ----- Functions -----
-
-uint8_t Output_receive_EnableMaster( const msg_header *hdr )
-{
-   dbug_print("Output_EnableMaster");
-
-   error_code_t err = SUCCESS;
-   const enable_master_msg_t *msg = (const enable_master_msg_t*)hdr;
-   // if message is for this node, enable master capability
-   if (msg->id == Connect_id)
-   {
-      Connect_set_master( 1, msg->id );
-
-      // send ack upstream
-   }
-   // else forward to next node in the chain
-   else
-      err = upipe_send_msg(slave_pipe, hdr);
-
-   return err;
-}
-
 
 // ----- Functions -----
 
 inline uint8_t uart_Output_available()
 {
-   return uart_output_available;
+   return Iconnect_available(Iconnect_up);
 }
 
 inline uint8_t uart_Output_keys_sent()
 {
-   return 0;
+   return keys_sent;
 }
 
 inline void uart_Output_reset_buffers()
 {
-
+   keys_sent = 0;
 }
 
 
@@ -197,23 +169,14 @@ void uart_Output_flushBuffers()
 // USB Module Setup
 inline void uart_Output_setup()
 {
-   error_code_t err;
-   err = upipe_init(&pipe, 1, Output_baud, UART_Buffer_Size);
-   if (err != SUCCESS)
-   {
-      erro_print("Failed to setup uart...");
-      printHex32(err);
-      return;
-   }
 
-   upipe_register_callback(pipe, CmdEnableMaster, &Output_receive_EnableMaster);
 }
 
 
 // USB Data Send
 inline void uart_Output_send()
 {
-   upipe_process(pipe); 
+   keys_sent = 0;
 }
 
 

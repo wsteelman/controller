@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <Lib/ScanLib.h>
 #include "error.h"
 #include "dma.h"
 

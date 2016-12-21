@@ -16,6 +16,7 @@ if ( ${COMPILER_FAMILY} MATCHES "avr" )
 
 	set ( Module_SRCS
 		output_com.c
+		usb_output_com.c
 		avr/usb_keyboard_serial.c
 	)
 

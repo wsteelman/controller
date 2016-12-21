@@ -9,7 +9,7 @@ typedef enum Iconnect_direction
 {
    Iconnect_down   = 0,
    Iconnect_up     = 1,
-   Iconnect_count  = 2, 
+   Iconnect_count  = 2,
 } Iconnect_direction;
 
 typedef enum Iconnect_state
@@ -37,12 +37,22 @@ extern Iconnect_node_t connect_node;
 
 error_code_t Iconnect_setup();
 
-error_code_t Iconnect_send_msg(Iconnect_direction dir, const msg_header *hdr);
- 
-error_code_t Iconnect_send_variable_msg(Iconnect_direction dir, msg_header *hdr, const uint8_t *var, uint8_t var_size);
-
 error_code_t Iconnect_process();
+
+error_code_t Iconnect_send_msg(Iconnect_direction dir, const msg_header *hdr);
+
+error_code_t Iconnect_send_variable_msg(Iconnect_direction dir, msg_header *hdr, const uint8_t *var, uint8_t var_size);
 
 void Iconnect_register_callback(Iconnect_direction dir, command cmd, rx_callback_t func);
 
 void Iconnect_reset();
+
+inline uint8_t Iconnect_node_id()
+{
+   return connect_node.id;
+}
+
+inline uint8_t Iconnect_available(Iconnect_direction dir)
+{
+   return connect_node.state == state_up && connect_node.cable_ok[dir];
+}

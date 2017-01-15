@@ -30,6 +30,7 @@
 #include <interconnect.h>
 
 // KLL
+#include <kll.h>
 #include <kll_defs.h>
 
 // Local Includes

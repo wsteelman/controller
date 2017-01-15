@@ -69,22 +69,6 @@ typedef struct id_report_msg_t
    uint8_t        id;
 } id_report_msg_t;
 
-typedef struct scan_code_msg_t
-{
-   msg_header     header;
-   uint8_t        id;
-   uint8_t        count;
-   TriggerGuide   codes[];
-} scan_code_msg_t;
-
-typedef struct animation_msg_t
-{
-   msg_header     header;
-   uint8_t        id;
-   uint8_t        param_count;
-   uint8_t        params[];
-} animation_msg_t;
-
 typedef struct remote_capability_msg_t
 {
    msg_header     header;

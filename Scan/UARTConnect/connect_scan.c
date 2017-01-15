@@ -37,6 +37,22 @@ void cliFunc_connectLst ( char *args );
 
 // ----- Messages -----
 
+typedef struct scan_code_msg_t
+{
+   msg_header     header;
+   uint8_t        id;
+   uint8_t        count;
+   TriggerGuide   codes[];
+} scan_code_msg_t;
+
+typedef struct animation_msg_t
+{
+   msg_header     header;
+   uint8_t        id;
+   uint8_t        param_count;
+   uint8_t        params[];
+} animation_msg_t;
+
 scan_code_msg_t         scan_code_msg           = { {CmdCommand_SYN, 0x01, sizeof(scan_code_msg_t), CmdScanCode}, 0xFF, 0};
 animation_msg_t         animation_msg           = { {CmdCommand_SYN, 0x01, sizeof(animation_msg_t), CmdAnimation}, 0xFF, 0};
 remote_capability_msg_t remote_capability_msg   = { {CmdCommand_SYN, 0x01, sizeof(remote_capability_msg_t), CmdRemoteCapability}, 0xFF, 0, 0, 0, 0};

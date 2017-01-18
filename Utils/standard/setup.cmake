@@ -11,8 +11,8 @@
 # Module C files
 #
 set ( Module_SRCS
-   uart.c
-   dma.c
+   mk20dx_uart.c
+   mk20dx_dma.c 
 )
 
 

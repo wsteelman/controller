@@ -14,7 +14,7 @@
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "dma.h"
+#include "mk20dx_dma.h"
 
 #if defined (_mk20dx256vlh7_)
    dma_addrs dma_chnls[2] = {dma0, dma1};

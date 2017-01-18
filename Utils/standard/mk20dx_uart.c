@@ -14,7 +14,7 @@
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "uart.h"
+#include "mk20dx_uart.h"
 
 #if defined (_mk20dx256vlh7_)
    uart_addrs uarts[UART_Count] = {uart0, uart1};

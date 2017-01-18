@@ -473,8 +473,8 @@ void cliFunc_iconnectMst( char* args )
 {
    // Parse number from argument
    //  NOTE: Only first argument is used
-   char* arg1Ptr;
-   char* arg2Ptr;
+   char* arg1Ptr = NULL;
+   char* arg2Ptr = NULL;
    CLI_argumentIsolation( args, &arg1Ptr, &arg2Ptr );
 
    print( NL );

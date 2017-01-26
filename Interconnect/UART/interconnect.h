@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdint.h>
 #include "msg.h"
 #include "uart_message_pipe.h"
 

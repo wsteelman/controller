@@ -22,6 +22,8 @@
 // Project Includes
 #include <kll_defs.h>
 #include <print.h>
+#include <Lib/delay.h>
+#include <string.h>
 
 // Local Includes
 #include "uart.h"
@@ -259,7 +261,7 @@ error_code_t upipe_init(uart_message_pipe_t **return_pipe, uint8_t uart_id, uint
       return FAILURE;
 
    // attach UART rx to dma buffer
-   err = uart_rx_dma_setup(uart_id, pipe->uart_handle, (uint32_t*)pipe->rx_buf.buffer, buffer_size);
+   err = uart_rx_dma_setup(uart_id, pipe->uart_handle, pipe->rx_buf.buffer, buffer_size);
    if (err != SUCCESS)
       return err;
 

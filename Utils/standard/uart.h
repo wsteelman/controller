@@ -16,6 +16,8 @@
 
 #pragma once
 
-#if defined (_mk20dx256vlh7_)
+#if defined(_mk20dx128_) || defined(_mk20dx128vlf5_) || defined(_mk20dx256_) || defined(_mk20dx256vlh7_) 
    #include "mk20dx_uart.h"
+#elif defined (_nRF52832_)
+   #include "nrf52_uart2.h"
 #endif

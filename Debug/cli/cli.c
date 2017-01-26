@@ -556,7 +556,7 @@ void cliFunc_version( char* args )
 	print( " \033[1mCPU:\033[0m           " CLI_CPU            NL );
 	print( " \033[1mDevice:\033[0m        " CLI_Device         NL );
 	print( " \033[1mModules:\033[0m       " CLI_Modules        NL );
-#if defined(_mk20dx128_) || defined(_mk20dx128vlf5_) || defined(_mk20dx256_) || defined(_mk20dx256vlh7_)
+#if defined(_mk20dx128_) || defined(_mk20dx128vlf5_) || defined(_mk20dx256_) || defined(_mk20dx256vlh7_) || defined(_nRF52832_)
 	print( " \033[1mUnique Id:\033[0m     " );
 	printHex32_op( SIM_UIDH, 8 );
 	printHex32_op( SIM_UIDMH, 8 );

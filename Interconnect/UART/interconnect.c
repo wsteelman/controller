@@ -1,10 +1,10 @@
 // Compiler Includes
-#include <Lib/ScanLib.h>
 
 // Project Includes
 #include <cli.h>
 #include <kll_defs.h>
 #include <print.h>
+#include <Lib/delay.h>
 
 #include "interconnect.h"
 
@@ -473,8 +473,8 @@ void cliFunc_iconnectMst( char* args )
 {
    // Parse number from argument
    //  NOTE: Only first argument is used
-   char* arg1Ptr = NULL;
-   char* arg2Ptr = NULL;
+   char* arg1Ptr = 0;
+   char* arg2Ptr = 0;
    CLI_argumentIsolation( args, &arg1Ptr, &arg2Ptr );
 
    print( NL );

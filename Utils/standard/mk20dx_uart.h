@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <Lib/ScanLib.h>
+#include <Lib/mk20dx.h>
 #include "error.h"
 #include "mk20dx_dma.h"
 
@@ -104,21 +104,116 @@ typedef const void *uart_handle_t;
 
 #endif
 
-uart_handle_t uart_config (uint8_t uart_id, uint16_t baud);
+#if defined (_mk20dx256vlh7_)
+   static uart_addrs uarts[UART_Count] = {uart0, uart1};
+#endif
 
-error_code_t uart_set_baud(uart_handle_t handle, uint16_t baud);
+static uart_handle uart_handles[UART_Count] = {0};
 
-error_code_t uart_rx_dma_setup(uint8_t chnl, uart_handle_t handle, uint32_t *dst, uint32_t buf_size);
+static inline uart_handle_t uart_config (uint8_t uart_id, uint16_t baud)
+{
+   if (uart_id >= UART_Count)
+      return NULL;
 
-uint8_t uart_rx_dma_buffer_position(uart_handle_t handle);
+   const uart_addrs *inf = &uarts[uart_id];
+   uart_handle *handle = &uart_handles[uart_id];
+   handle->id = uart_id;
+   handle->dma_rx_chnl = 0xFF;
 
-void uart_start(uart_handle_t handle);
+   // Turn on the clock
+   SIM_SCGC4 |= inf->clk_gate_mask; // Disable clock gating
 
-void uart_stop(uart_handle_t handle);
+   // pin setup
+   *(inf->rx_pin) = PORT_PCR_PE | PORT_PCR_PS | PORT_PCR_PFE |
+                    PORT_PCR_MUX(inf->pin_mux_mode);
+   *(inf->tx_pin) = PORT_PCR_DSE | PORT_PCR_SRE |
+                    PORT_PCR_MUX(inf->pin_mux_mode);
 
-uint8_t uart_tx_fifo_size(uart_handle_t handle);
+   // baud rate
+   *(inf->bdh) = (uint8_t)(baud >> 8);
+   *(inf->bdl) = (uint8_t)baud;
+   *(inf->c4) = 0;
 
-uint8_t uart_tx_fifo_pending(uart_handle_t handle);
+   // 8 bit, Even Parity, Idle Character bit after stop
+   // NOTE: For 8 bit with Parity you must enable 9 bit transmission (pg. 1065)
+   //       You only need to use UART0_D for 8 bit reading/writing though
+   // UART_C1_M UART_C1_PE UART_C1_PT UART_C1_ILT
+   *(inf->c1) = UART_C1_M | UART_C1_PE | UART_C1_ILT;
 
-void uart_send(uart_handle_t handle, uint8_t data);
+   // Only using Tx Fifos
+   *(inf->pfifo) = UART_PFIFO_TXFE;
+   handle->tx_fifo_size = (*(inf->pfifo) & UART_PFIFO_TXFIFOSIZE) >> 2;
 
+   return (void*) handle;
+}
+
+static inline error_code_t uart_set_baud(uart_handle_t handle, uint16_t baud)
+{
+   uart_handle *h = (uart_handle*)handle;
+   const uart_addrs *inf = &uarts[h->id];
+
+   // baud rate
+   *(inf->bdh) = (uint8_t)(baud >> 8);
+   *(inf->bdl) = (uint8_t)baud;
+   *(inf->c4) = 0;
+
+   return SUCCESS;
+}
+
+static inline error_code_t uart_rx_dma_setup(uint8_t chnl, uart_handle_t handle, uint8_t *dst, uint32_t buf_size)
+{
+   uart_handle *h = (uart_handle*)handle;
+   const uart_addrs *inf = &uarts[h->id];
+
+   if (h->dma_rx_chnl != 0xFF)
+      return DMA_CHANNEL_IN_USE;
+   h->dma_rx_chnl = chnl;
+
+   error_code_t err = dma_config(chnl, inf->dma_mux_rx_mask, (uint8_t*)inf->data, dst, buf_size);
+   if (err != DMA_SUCCESS)
+      return err;
+
+   // enable DMA requests on receive(requires RX interrupts)
+   *inf->c5 = UART_C5_RDMAS;
+
+   // Add interrupts to the vector table
+   NVIC_ENABLE_IRQ( inf->irq_status_mask );
+
+   return SUCCESS;
+}
+
+static inline uint8_t uart_rx_dma_buffer_position(uart_handle_t handle)
+{
+   uart_handle *h = (uart_handle*)handle;
+   return dma_buffer_position(h->dma_rx_chnl);
+}
+
+static inline void uart_start(uart_handle_t handle)
+{
+   uart_handle *h = (uart_handle*)handle;
+   *uarts[h->id].c2 = UART_C2_TE | UART_C2_RE | UART_C2_RIE;
+}
+
+static inline void uart_stop(uart_handle_t handle)
+{
+   uart_handle *h = (uart_handle*)handle;
+   *uarts[h->id].c2 = 0;
+}
+
+static inline uint8_t uart_tx_fifo_size(uart_handle_t handle)
+{
+   uart_handle *h = (uart_handle*)handle;
+   return h->tx_fifo_size;
+}
+
+static inline uint8_t uart_tx_fifo_pending(uart_handle_t handle)
+{
+   uart_handle *h = (uart_handle*)handle;
+   return *uarts[h->id].tcfifo;
+}
+
+static inline void uart_send(uart_handle_t handle, uint8_t data)
+{
+   uart_handle *h = (uart_handle*)handle;
+   *uarts[h->id].data = data;
+}

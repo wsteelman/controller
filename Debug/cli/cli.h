@@ -39,7 +39,6 @@
 
 
 // ----- Macros -----
-
 // AVR CLI Dictionary definitions (has to deal with the annoying PROGMEM
 // Only using PROGMEM with descriptions (all the string comparison tools need to be re-written otherwise)
 #if defined(_at90usb162_) || defined(_atmega32u4_) || defined(_at90usb646_) || defined(_at90usb1286_) // AVR
@@ -54,7 +53,7 @@
 	const PROGMEM char name##CLIDict_DescEntry[] = description;
 
 // ARM is easy :P
-#elif defined(_mk20dx128_) || defined(_mk20dx128vlf5_) || defined(_mk20dx256_) || defined(_mk20dx256vlh7_) // ARM
+#elif defined(_mk20dx128_) || defined(_mk20dx128vlf5_) || defined(_mk20dx256_) || defined(_mk20dx256vlh7_) || defined(_nRF52832_) // ARM
 #define CLIDict_Def(name,description) \
 	const char name##Name[] = description; \
 	const CLIDictItem name[]
@@ -64,6 +63,9 @@
 
 #define CLIDict_Entry(name,description) \
 	const char name##CLIDict_DescEntry[] = description;
+
+#else
+   #warning No chip defined
 #endif
 
 #define RING_PREV(i) CLI_wrap(i - 1, 0, CLIMaxHistorySize - 1)

@@ -50,7 +50,7 @@ int main()
 	CLI_init();
 
 	// Setup Modules
-   Iconnect_setup();
+   Iconnect_setup(ICONNECT_ENABLE_UP_AND_DOWN);
 	Output_setup();
 	Macro_setup();
 	Scan_setup();

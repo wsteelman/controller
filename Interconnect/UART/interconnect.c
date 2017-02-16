@@ -55,6 +55,12 @@ id_request_msg_t        ic_id_request_msg          = { {CmdCommand_SYN, 0x01, si
 id_enum_msg_t           ic_id_enum_msg             = { {CmdCommand_SYN, 0x01, sizeof(id_enum_msg_t), CmdIdEnumeration}, 0xFF};
 id_report_msg_t         ic_id_report_msg           = { {CmdCommand_SYN, 0x01, sizeof(id_report_msg_t), CmdIdReport}, 0xFF};
 
+inline uint8_t link_enabled(Iconnect_direction dir, const Iconnect_node_t *node)
+{
+   uint8_t mask = 1 << dir;
+   return (node->enable_mask & mask) == mask;
+}
+
 // -- Connect send functions --
 
 // patternLen defines how many bytes should the incrementing pattern have
@@ -66,29 +72,39 @@ void Iconnect_send_CableCheck()
    {
       ic_cable_check_msg.pattern[c] = value;
    }
-   upipe_send_msg(connect_node.pipe[Iconnect_up], &ic_cable_check_msg.header);
-   upipe_send_msg(connect_node.pipe[Iconnect_down], &ic_cable_check_msg.header);
-   connect_node.cable_checks_sent[Iconnect_up]++;
-   connect_node.cable_checks_sent[Iconnect_down]++;
+
+   if (link_enabled(Iconnect_up, &connect_node))
+   {
+      upipe_send_msg(connect_node.pipe[Iconnect_up], &ic_cable_check_msg.header);
+      connect_node.cable_checks_sent[Iconnect_up]++;
+   }
+   if (link_enabled(Iconnect_down, &connect_node))
+   {
+      upipe_send_msg(connect_node.pipe[Iconnect_down], &ic_cable_check_msg.header);
+      connect_node.cable_checks_sent[Iconnect_down]++;
+   }
 }
 
 void Iconnect_send_IdRequest()
 {
-   upipe_send_msg(connect_node.pipe[Iconnect_up], &ic_id_request_msg.header);
+   if (link_enabled(Iconnect_up, &connect_node))
+      upipe_send_msg(connect_node.pipe[Iconnect_up], &ic_id_request_msg.header);
 }
 
 // id is the value the next slave should enumerate as
 void Iconnect_send_IdEnumeration( uint8_t id )
 {
    ic_id_enum_msg.id = id;
-   upipe_send_msg(connect_node.pipe[Iconnect_down], &ic_id_enum_msg.header);
+   if (link_enabled(Iconnect_down, &connect_node))
+      upipe_send_msg(connect_node.pipe[Iconnect_down], &ic_id_enum_msg.header);
 }
 
 // id is the currently assigned id to the slave
 void Iconnect_send_IdReport( uint8_t id )
 {
    ic_id_report_msg.id = id;
-   upipe_send_msg(connect_node.pipe[Iconnect_up], &ic_id_report_msg.header);
+   if (link_enabled(Iconnect_up, &connect_node))
+      upipe_send_msg(connect_node.pipe[Iconnect_up], &ic_id_report_msg.header);
 }
 
 // -- Connect receive functions --
@@ -214,50 +230,58 @@ uint8_t Iconnect_receive_IdReport( const msg_header *hdr )
 // Resets the state of the UART buffers and state variables
 void Iconnect_reset()
 {
-   upipe_reset(connect_node.pipe[Iconnect_down], UART_Buffer_Size);
-   upipe_reset(connect_node.pipe[Iconnect_up], UART_Buffer_Size);
+   if (link_enabled(Iconnect_down, &connect_node))
+      upipe_reset(connect_node.pipe[Iconnect_down], UART_Buffer_Size);
+   if (link_enabled(Iconnect_up, &connect_node))
+      upipe_reset(connect_node.pipe[Iconnect_up], UART_Buffer_Size);
 }
 
 
-error_code_t Iconnect_setup()
+error_code_t Iconnect_setup(uint8_t enable_mask)
 {
+   // TODO: add flag for unidirectional interconnect
    CLI_registerDictionary( iConnectCLIDict, iConnectCLIDictName );
    
    connect_node.id = 0xFF;
+   connect_node.enable_mask = enable_mask;
 
-   error_code_t err;
-   err = upipe_init(&connect_node.pipe[Iconnect_down], Iconnect_down, Iconnect_baud, UART_Buffer_Size);
-   if (err != SUCCESS)
+   for (uint8_t dir = 0; dir < Iconnect_count; ++dir)
    {
-      erro_print("Failed to setup slave uart...");
-      printHex32(err);
-      return err;
+      if (link_enabled(dir, &connect_node))
+      {
+         error_code_t err;
+         err = upipe_init(&connect_node.pipe[dir], dir, Iconnect_baud, UART_Buffer_Size);
+         if (err != SUCCESS)
+         {
+            erro_print("Failed to setup uart...");
+            printHex32(err);
+            return err;
+         }
+      }
+      else
+         connect_node.pipe[dir] = NULL;
    }
 
-   err = upipe_init(&connect_node.pipe[Iconnect_up], Iconnect_up, Iconnect_baud, UART_Buffer_Size);
-   if (err != SUCCESS)
+   // register slave pipe callbacks
+   if (link_enabled(Iconnect_down, &connect_node))
    {
-      erro_print("Failed to setup slave uart...");
-      printHex32(err);
-      return err;
+      upipe_register_callback(connect_node.pipe[Iconnect_down], CmdCableCheck,      &Iconnect_receive_slave_CableCheck);
+      upipe_register_callback(connect_node.pipe[Iconnect_down], CmdIdRequest,       &Iconnect_receive_slave_IdRequest);
+      upipe_register_callback(connect_node.pipe[Iconnect_down], CmdIdEnumeration,   &Iconnect_receive_slave_IdEnumeration);
+      upipe_register_callback(connect_node.pipe[Iconnect_down], CmdIdReport,        &Iconnect_receive_IdReport);
+      upipe_reset(connect_node.pipe[Iconnect_down], UART_Buffer_Size);
    }
 
-   //// register slave pipe callbacks
-   upipe_register_callback(connect_node.pipe[Iconnect_down], CmdCableCheck,      &Iconnect_receive_slave_CableCheck);
-   upipe_register_callback(connect_node.pipe[Iconnect_down], CmdIdRequest,       &Iconnect_receive_slave_IdRequest);
-   upipe_register_callback(connect_node.pipe[Iconnect_down], CmdIdEnumeration,   &Iconnect_receive_slave_IdEnumeration);
-   upipe_register_callback(connect_node.pipe[Iconnect_down], CmdIdReport,        &Iconnect_receive_IdReport);
-
-   //// register master pipe callbacks
-   upipe_register_callback(connect_node.pipe[Iconnect_up], CmdCableCheck,        &Iconnect_receive_master_CableCheck);
-   upipe_register_callback(connect_node.pipe[Iconnect_up], CmdIdRequest,         &Iconnect_receive_master_IdRequest);
-   upipe_register_callback(connect_node.pipe[Iconnect_up], CmdIdEnumeration,     &Iconnect_receive_master_IdEnumeration);
-   upipe_register_callback(connect_node.pipe[Iconnect_up], CmdIdReport,          &Iconnect_receive_IdReport);
-
-   upipe_reset(connect_node.pipe[Iconnect_down], UART_Buffer_Size);
-   upipe_reset(connect_node.pipe[Iconnect_up], UART_Buffer_Size);
-
-   //// mark node as configured
+   // register master pipe callbacks
+   if (link_enabled(Iconnect_up, &connect_node))
+   {
+      upipe_register_callback(connect_node.pipe[Iconnect_up], CmdCableCheck,        &Iconnect_receive_master_CableCheck);
+      upipe_register_callback(connect_node.pipe[Iconnect_up], CmdIdRequest,         &Iconnect_receive_master_IdRequest);
+      upipe_register_callback(connect_node.pipe[Iconnect_up], CmdIdEnumeration,     &Iconnect_receive_master_IdEnumeration);
+      upipe_register_callback(connect_node.pipe[Iconnect_up], CmdIdReport,          &Iconnect_receive_IdReport);
+      upipe_reset(connect_node.pipe[Iconnect_up], UART_Buffer_Size);
+   }
+   // mark node as configured
    connect_node.state = state_configured;
    info_msg("Iconnect node state: CONFIGURED" NL);
 
@@ -274,6 +298,10 @@ error_code_t Iconnect_send_msg(Iconnect_direction dir, const msg_header *hdr)
    if ( !connect_node.cable_ok[dir] )
       return LINK_DOWN;
 
+   // pipe is purposely not configured
+   if (!link_enabled(dir, &connect_node))
+       return SUCCESS;
+   
    return upipe_send_msg(connect_node.pipe[dir], hdr);
 }
 
@@ -285,18 +313,25 @@ error_code_t Iconnect_send_variable_msg(Iconnect_direction dir, msg_header *hdr,
    if ( !connect_node.cable_ok[dir] )
       return LINK_DOWN;
 
+   // pipe is purposely not configured
+   if (!link_enabled(dir, &connect_node))
+       return SUCCESS;
+ 
    return upipe_send_variable_msg(connect_node.pipe[dir], hdr, var, var_size);
 }
 
 void Iconnect_register_callback(Iconnect_direction dir, command cmd, rx_callback_t func)
 {
-   upipe_register_callback(connect_node.pipe[dir], cmd, func);
+   if (link_enabled(dir, &connect_node))
+      upipe_register_callback(connect_node.pipe[dir], cmd, func);
 }
 
 void Iconnect_send_idle( uint8_t num )
 {
-   upipe_send_idle(connect_node.pipe[Iconnect_up], num);
-   upipe_send_idle(connect_node.pipe[Iconnect_down], num);
+   if (link_enabled(Iconnect_up, &connect_node))
+      upipe_send_idle(connect_node.pipe[Iconnect_up], num);
+   if (link_enabled(Iconnect_down, &connect_node))
+      upipe_send_idle(connect_node.pipe[Iconnect_down], num);
 }
 
 error_code_t Iconnect_process()
@@ -382,8 +417,10 @@ error_code_t Iconnect_process()
    {
       // Check if Tx Buffers are empty and the Tx Ring buffers have data to send
       // This happens if there was previously nothing to send
-      upipe_process(connect_node.pipe[Iconnect_down]);
-      upipe_process(connect_node.pipe[Iconnect_up]);
+      if (link_enabled(Iconnect_down, &connect_node))
+         upipe_process(connect_node.pipe[Iconnect_down]);
+      if (link_enabled(Iconnect_up, &connect_node))
+         upipe_process(connect_node.pipe[Iconnect_up]);
    }
    return SUCCESS;
 }

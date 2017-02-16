@@ -6,6 +6,10 @@
 
 #define PIPE_COUNT 2 2
 
+#define ICONNECT_ENABLE_DOWN 0x01
+#define ICONNECT_ENABLE_UP 0x02
+#define ICONNECT_ENABLE_UP_AND_DOWN 0x03
+
 typedef enum Iconnect_direction
 {
    Iconnect_down   = 0,
@@ -24,6 +28,7 @@ typedef enum Iconnect_state
 
 typedef struct Iconnect_node_t
 {
+   uint8_t enable_mask;
    uint8_t id;
    uint8_t master;
    Iconnect_state state;
@@ -36,7 +41,7 @@ typedef struct Iconnect_node_t
 
 extern Iconnect_node_t connect_node;
 
-error_code_t Iconnect_setup();
+error_code_t Iconnect_setup(uint8_t enable_mask);
 
 error_code_t Iconnect_process();
 

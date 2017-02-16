@@ -215,7 +215,7 @@ error_code_t upipe_send_bytes(uart_message_pipe_t *pipe, const uint8_t *buffer, 
    {
       while (ring_buffer_enqueue(buf, *buffer) != SUCCESS)
       {
-         delay( 1 );
+         //delay( 1 );
       }
       if ( upipe_debug )
       {

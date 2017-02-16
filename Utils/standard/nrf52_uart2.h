@@ -89,7 +89,7 @@ static inline uart_handle_t uart_config (uint8_t uart_id, uint16_t baud)
    nrf_gpio_cfg_output(tx_pin);
    nrf_gpio_cfg_input(rx_pin, NRF_GPIO_PIN_NOPULL);
 
-   nrf_uarte_baudrate_set(dev, NRF_UARTE_BAUDRATE_115200);
+   nrf_uarte_baudrate_set(dev, NRF_UARTE_BAUDRATE_1000000);
    nrf_uarte_configure(dev, 
                        NRF_UARTE_PARITY_EXCLUDED,
                        NRF_UARTE_HWFC_DISABLED);
@@ -125,7 +125,7 @@ static inline uart_handle_t uart_config (uint8_t uart_id, uint16_t baud)
 static inline error_code_t uart_set_baud(uart_handle_t handle, uint16_t baud)
 {
    uart_handle *h = (uart_handle*)handle;
-   nrf_uarte_baudrate_set(h->dev, NRF_UARTE_BAUDRATE_115200);
+   nrf_uarte_baudrate_set(h->dev, NRF_UARTE_BAUDRATE_1000000);
 
    return SUCCESS;
 }
